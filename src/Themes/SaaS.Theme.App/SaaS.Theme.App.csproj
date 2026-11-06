@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <ItemGroup><PackageReference Include="OrchardCore.Theme.Targets" /></ItemGroup>
+</Project>

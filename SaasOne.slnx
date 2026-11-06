@@ -1,0 +1,13 @@
+<Solution>
+  <Project Path="src/Platform/SaaS.Abstractions/SaaS.Abstractions.csproj" />
+  <Project Path="src/Platform/SaaS.Tenancy/SaaS.Tenancy.csproj" />
+  <Project Path="src/Platform/SaaS.Identity/SaaS.Identity.csproj" />
+  <Project Path="src/Platform/SaaS.AccessControl/SaaS.AccessControl.csproj" />
+  <Project Path="src/Platform/SaaS.Auditing/SaaS.Auditing.csproj" />
+  <Project Path="src/Themes/SaaS.Theme.App/SaaS.Theme.App.csproj" />
+  <Project Path="src/SaaS.Web/SaaS.Web.csproj" />
+  <Project Path="tools/SaaS.Build/SaaS.Build.csproj" />
+  <Project Path="tools/SaaS.SqlSmoke/SaaS.SqlSmoke.csproj" />
+  <Project Path="tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj" />
+  <Project Path="tests/Architecture/SaaS.ArchitectureTests/SaaS.ArchitectureTests.csproj" />
+</Solution>
