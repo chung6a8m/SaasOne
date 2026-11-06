@@ -11,6 +11,7 @@ using OrchardCore.Environment.Shell.Builders;
 using OrchardCore.Environment.Shell.Descriptor;
 using OrchardCore.Environment.Shell.Descriptor.Models;
 using OrchardCore.OpenId;
+using OrchardCore.OpenId.YesSql.Models;
 using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Operations;
 using SaaS.Web.Orchard;
@@ -112,7 +113,7 @@ internal sealed class NativeIssuerFixture : IAsyncDisposable
         await scope.UsingServiceScopeAsync(current => action(current.ServiceProvider));
     }
 
-    public async Task<IssuerEntry> SeedAsync(string shell = "Default", string type = OpenIddictConstants.TokenTypeHints.AccessToken)
+    public async Task<IssuerEntry> SeedAsync(string shell = "Default", string type = OpenIddictConstants.TokenTypeIdentifiers.AccessToken)
     {
         IssuerEntry? result = null;
         await InShellAsync(shell, async provider =>
@@ -169,9 +170,10 @@ internal sealed class NativeIssuerFixture : IAsyncDisposable
     public async Task SetDefaultReadFailureAsync(bool fail)
     {
         await using var connection = await SqlOperations.OpenAsync(_environment.PlatformAdmin, CancellationToken.None);
-        // Both identifiers are locally generated/fixed, never a request or token value.
+        // Target the native OpenId collection, NOT the unrelated default document table.
+        // These identifiers are locally generated/fixed, never request or token values.
         await SqlOperations.ExecuteAsync(connection,
-            $"{(fail ? "DENY" : "GRANT")} SELECT ON OBJECT::[dbo].[{_prefix}_Document] TO [saas_platform_runtime]", CancellationToken.None);
+            $"{(fail ? "DENY" : "GRANT")} SELECT ON OBJECT::[dbo].[{_prefix}_{OpenIdToken.OpenIdCollection}_Document] TO [saas_platform_runtime]", CancellationToken.None);
     }
 
     public async Task RestartAsync()

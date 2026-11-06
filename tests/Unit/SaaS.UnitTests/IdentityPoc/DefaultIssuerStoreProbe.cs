@@ -39,7 +39,8 @@ internal sealed class DefaultIssuerStoreProbe(IShellHost shells, TimeProvider? c
                 var token = await tokens.FindByIdAsync(entry.TokenId, cancellationToken);
                 if (token is null
                     || await tokens.GetStatusAsync(token, cancellationToken) != OpenIddictConstants.Statuses.Valid
-                    || await tokens.GetTypeAsync(token, cancellationToken) != OpenIddictConstants.TokenTypeHints.AccessToken
+                    // OpenIddict 7 stores the canonical token-type URN, not token_type_hint.
+                    || await tokens.GetTypeAsync(token, cancellationToken) != OpenIddictConstants.TokenTypeIdentifiers.AccessToken
                     || await tokens.GetSubjectAsync(token, cancellationToken) != entry.Subject
                     || await tokens.GetAuthorizationIdAsync(token, cancellationToken) != entry.AuthorizationId)
                 {

@@ -17,7 +17,7 @@ public sealed partial class M2IdentityPocTests
             var token = await tokens.FindByIdAsync(entry.TokenId);
             Assert.NotNull(token);
             Assert.Equal(OpenIddictConstants.Statuses.Valid, await tokens.GetStatusAsync(token));
-            Assert.Equal(OpenIddictConstants.TokenTypeHints.AccessToken, await tokens.GetTypeAsync(token));
+            Assert.Equal(OpenIddictConstants.TokenTypeIdentifiers.AccessToken, await tokens.GetTypeAsync(token));
             Assert.Equal(entry.Subject, await tokens.GetSubjectAsync(token));
             Assert.Equal(entry.AuthorizationId, await tokens.GetAuthorizationIdAsync(token));
             Assert.True(await tokens.GetExpirationDateAsync(token) > DateTimeOffset.UtcNow, "Native token expiry must survive commit.");
