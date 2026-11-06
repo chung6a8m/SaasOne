@@ -7,6 +7,9 @@
     <PackageVersion Include="OrchardCore.Application.Targets" Version="3.0.1" />
     <PackageVersion Include="OrchardCore.Infrastructure" Version="3.0.1" />
     <PackageVersion Include="OrchardCore.OpenId" Version="3.0.1" />
+    <PackageVersion Include="OrchardCore.Users" Version="3.0.1" />
+    <PackageVersion Include="OrchardCore.Roles" Version="3.0.1" />
+    <PackageVersion Include="OrchardCore.Settings" Version="3.0.1" />
     <PackageVersion Include="OrchardCore.DisplayManagement" Version="3.0.1" />
     <PackageVersion Include="OrchardCore.Theme.Targets" Version="3.0.1" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.14" />

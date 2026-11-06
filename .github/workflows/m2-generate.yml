@@ -1,0 +1,40 @@
+name: M2 owned generated inputs
+on:
+  push:
+    branches: [feat/m2-identity-poc]
+    paths: ['Directory.Packages.props', 'src/Platform/SaaS.Identity/SaaS.Identity.csproj', 'src/Platform/SaaS.Tenancy/Data/Identity*.cs', '.github/workflows/m2-generate.yml']
+permissions:
+  contents: write
+concurrency:
+  group: m2-generated-inputs
+  cancel-in-progress: false
+jobs:
+  generate:
+    if: github.ref == 'refs/heads/feat/m2-identity-poc'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: feat/m2-identity-poc
+          persist-credentials: true
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Generate only owned lock and EF inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet tool restore
+          dotnet restore SaasOne.slnx --force-evaluate
+          dotnet build src/Platform/SaaS.Tenancy/SaaS.Tenancy.csproj -c Release --no-restore
+          if ! find src/Platform/SaaS.Tenancy/Migrations/Platform -name '*_IdentityAuthority.cs' | grep -q .; then
+            dotnet ef migrations add IdentityAuthority --project src/Platform/SaaS.Tenancy --context PlatformDbContext --output-dir Migrations/Platform --configuration Release --no-build
+          fi
+          git add -- '**/packages.lock.json' src/Platform/SaaS.Tenancy/Migrations/Platform
+          if git diff --cached --quiet; then exit 0; fi
+          git diff --cached --name-only | while IFS= read -r path; do
+            case "$path" in */packages.lock.json|src/Platform/SaaS.Tenancy/Migrations/Platform/*.cs) ;; *) echo 'Unexpected generated path'; exit 1;; esac
+          done
+          git config user.name 'SaasOne build'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'build(M2): generate pinned native identity locks and owned platform migration'
+          git push origin HEAD:refs/heads/feat/m2-identity-poc
