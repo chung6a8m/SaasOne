@@ -1140,28 +1140,6 @@
           "ZString": "2.6.0"
         }
       },
-      "OrchardCore.DisplayManagement": {
-        "type": "Transitive",
-        "resolved": "3.0.1",
-        "contentHash": "6CsvMUmj2vzO9b57dHtLokz2fcboIEXQHDUNOGt6CITz8a3JK0mzWiedkR1LDVrr1rF/gJ/CWwz3mYcMz5+GRA==",
-        "dependencies": {
-          "AnyAscii": "0.3.3",
-          "Castle.Core": "5.2.1",
-          "Fluid.Core": "2.31.0",
-          "JsonPath.Net": "2.2.0",
-          "Microsoft.AspNetCore.Mvc.Razor.RuntimeCompilation": "10.0.8",
-          "Microsoft.CodeAnalysis.Analyzers": "5.3.0",
-          "Microsoft.CodeAnalysis.CSharp": "5.3.0",
-          "Microsoft.IO.RecyclableMemoryStream": "3.0.1",
-          "OrchardCore.DisplayManagement.Abstractions": "3.0.1",
-          "OrchardCore.Infrastructure.Abstractions": "3.0.1",
-          "OrchardCore.Liquid.Abstractions": "3.0.1",
-          "OrchardCore.Localization.Abstractions": "3.0.1",
-          "OrchardCore.Mvc.Core": "3.0.1",
-          "Parlot": "1.5.7",
-          "ZString": "2.6.0"
-        }
-      },
       "OrchardCore.DisplayManagement.Abstractions": {
         "type": "Transitive",
         "resolved": "3.0.1",
@@ -1655,6 +1633,7 @@
       "saas.theme.app": {
         "type": "Project",
         "dependencies": {
+          "OrchardCore.DisplayManagement": "[3.0.1, )",
           "OrchardCore.Theme.Targets": "[3.0.1, )"
         }
       },
@@ -1715,6 +1694,29 @@
           "Parlot": "1.5.7",
           "ZString": "2.6.0",
           "ncrontab": "3.4.0"
+        }
+      },
+      "OrchardCore.DisplayManagement": {
+        "type": "CentralTransitive",
+        "requested": "[3.0.1, )",
+        "resolved": "3.0.1",
+        "contentHash": "6CsvMUmj2vzO9b57dHtLokz2fcboIEXQHDUNOGt6CITz8a3JK0mzWiedkR1LDVrr1rF/gJ/CWwz3mYcMz5+GRA==",
+        "dependencies": {
+          "AnyAscii": "0.3.3",
+          "Castle.Core": "5.2.1",
+          "Fluid.Core": "2.31.0",
+          "JsonPath.Net": "2.2.0",
+          "Microsoft.AspNetCore.Mvc.Razor.RuntimeCompilation": "10.0.8",
+          "Microsoft.CodeAnalysis.Analyzers": "5.3.0",
+          "Microsoft.CodeAnalysis.CSharp": "5.3.0",
+          "Microsoft.IO.RecyclableMemoryStream": "3.0.1",
+          "OrchardCore.DisplayManagement.Abstractions": "3.0.1",
+          "OrchardCore.Infrastructure.Abstractions": "3.0.1",
+          "OrchardCore.Liquid.Abstractions": "3.0.1",
+          "OrchardCore.Localization.Abstractions": "3.0.1",
+          "OrchardCore.Mvc.Core": "3.0.1",
+          "Parlot": "1.5.7",
+          "ZString": "2.6.0"
         }
       },
       "OrchardCore.Infrastructure": {
