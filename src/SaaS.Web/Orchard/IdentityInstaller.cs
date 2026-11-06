@@ -33,15 +33,27 @@ public sealed class IdentityInstaller(TenancyConnections connections, IdentityDe
 
     public async Task InitializeAsync(Guid installationId, CancellationToken ct)
     {
-        var provisioner = new SqlProvisioner(connections.Provisioner());
-        var actor = await provisioner.AuthenticateAsync(ct);
+        var actor = await new SqlProvisioner(connections.Provisioner()).AuthenticateAsync(ct);
         await using var lease = await OperationLease.AcquireAsync(connections.Platform("operator"), "platform-identity", ct);
-        await using (var db = TenancyConnections.PlatformContext(connections.Platform("migrator")))
+        await RequireInstallationAsync(installationId, ct);
+        // A completed installation is a verification boundary, not permission to
+        // migrate, repair native history, reset clients, resolve secrets or re-grant DML.
+        await using (var sql = await SqlOperations.OpenAsync(connections.Platform("migrator"), ct))
         {
-            var bootstrap = await db.Bootstrap.AsNoTracking().SingleAsync(ct);
-            if (!bootstrap.Completed || bootstrap.InstallationId != installationId) throw new TenantContractException("platform_not_ready");
-            await db.Database.MigrateAsync(ct);
+            var exists = await SqlOperations.ScalarAsync(sql,
+                "SELECT CASE WHEN OBJECT_ID(N'[identity].[Installations]', N'U') IS NULL THEN 0 ELSE 1 END", ct);
+            if (Convert.ToInt32(exists, System.Globalization.CultureInfo.InvariantCulture) == 1)
+            {
+                await using var read = TenancyConnections.PlatformContext(connections.Platform("migrator"));
+                if (await read.IdentityInstallations.AsNoTracking().AnyAsync(x => x.NativePrefix == deployment.NativePrefix, ct))
+                {
+                    await VerifyAsync(connections, deployment, ct);
+                    return;
+                }
+            }
         }
+        await using (var db = TenancyConnections.PlatformContext(connections.Platform("migrator")))
+            await db.Database.MigrateAsync(ct);
         string migrationHash = "";
         await InMaintenanceAsync(installationId, async provider =>
         {
@@ -53,26 +65,19 @@ public sealed class IdentityInstaller(TenancyConnections connections, IdentityDe
             await provider.GetRequiredService<IDataMigrationManager>().UpdateAllFeaturesAsync();
             await provider.GetRequiredService<YesSql.ISession>().SaveChangesAsync();
             migrationHash = await ReadMigrationHashAsync(connections.Platform("migrator"), deployment.NativePrefix, ct);
-            await RegisterClientsAsync(provider, ct);
+            await RegisterClientsAsync(provider, null, ct);
         }, ct);
         await lease.AssertHeldAsync(ct);
         await GrantRuntimeAsync(ct);
         await using (var db = TenancyConnections.PlatformContext(connections.Platform("migrator")))
         {
-            var installation = await db.IdentityInstallations.SingleOrDefaultAsync(x => x.NativePrefix == deployment.NativePrefix, ct);
-            if (installation is null)
+            db.IdentityInstallations.Add(new IdentityInstallation
             {
-                db.IdentityInstallations.Add(new IdentityInstallation
-                {
-                    NativePrefix = deployment.NativePrefix, Issuer = deployment.Issuer.AbsoluteUri, FeatureHash = FeatureHash,
-                    MigrationHash = migrationHash, Version = 1, CompletedAt = DateTimeOffset.UtcNow
-                });
-                db.Audit.Add(new OperationalAudit { Actor = actor, OperationId = Guid.NewGuid(), Action = "IdentityInitialized", OccurredAt = DateTimeOffset.UtcNow });
-                await db.SaveChangesAsync(ct);
-            }
-            else if (installation.Version != 1 || installation.Issuer != deployment.Issuer.AbsoluteUri
-                || installation.FeatureHash != FeatureHash || installation.MigrationHash != migrationHash)
-                throw new TenantContractException("identity_installation_mismatch");
+                NativePrefix = deployment.NativePrefix, Issuer = deployment.Issuer.AbsoluteUri, FeatureHash = FeatureHash,
+                MigrationHash = migrationHash, Version = 1, CompletedAt = DateTimeOffset.UtcNow
+            });
+            db.Audit.Add(new OperationalAudit { Actor = actor, OperationId = Guid.NewGuid(), Action = "IdentityInitialized", OccurredAt = DateTimeOffset.UtcNow });
+            await db.SaveChangesAsync(ct);
         }
         await VerifyAsync(connections, deployment, ct);
     }
@@ -80,6 +85,22 @@ public sealed class IdentityInstaller(TenancyConnections connections, IdentityDe
     public async Task<Guid> EnrollUserAsync(Guid installationId, string username, string email, string credential, IReadOnlyCollection<Guid> tenants, CancellationToken ct)
     {
         _ = await new SqlProvisioner(connections.Provisioner()).AuthenticateAsync(ct);
+        await using var lease = await OperationLease.AcquireAsync(connections.Platform("operator"), "platform-identity", ct);
+        await RequireInstallationAsync(installationId, ct);
+        await VerifyAsync(connections, deployment, ct);
+        if (tenants.Count == 0 || tenants.Any(x => x == Guid.Empty) || tenants.Distinct().Count() != tenants.Count)
+            throw new TenantContractException("invalid_identity_memberships");
+        await using (var db = TenancyConnections.PlatformContext(connections.Platform("migrator")))
+        {
+            foreach (var tenantId in tenants)
+            {
+                var tenant = await db.Tenants.AsNoTracking().SingleOrDefaultAsync(x => x.Id == tenantId, ct)
+                    ?? throw new TenantContractException("tenant_not_found");
+                TenantDatabaseVerifier.ValidateRegistration(tenant);
+                if (!await db.IdentityClients.AsNoTracking().AnyAsync(x => x.TenantId == tenantId && x.Enabled, ct))
+                    throw new TenantContractException("identity_client_not_registered");
+            }
+        }
         string subject = "";
         await InMaintenanceAsync(installationId, async provider =>
         {
@@ -96,17 +117,44 @@ public sealed class IdentityInstaller(TenancyConnections connections, IdentityDe
                 throw new TenantContractException("identity_existing_user_requires_explicit_rotation");
             subject = await manager.GetUserIdAsync(user);
         }, ct);
+        await lease.AssertHeldAsync(ct);
         var operations = new IdentityOperations(connections);
         var globalId = await operations.EnrollSubjectAsync(deployment.Issuer.AbsoluteUri, subject, ct);
         foreach (var tenant in tenants) await operations.SetMembershipAsync(globalId, tenant, true, ct);
         return globalId;
     }
 
-    private async Task RegisterClientsAsync(IServiceProvider provider, CancellationToken ct)
+    public async Task RegisterTenantAsync(Guid installationId, Guid tenantId, CancellationToken ct)
+    {
+        var actor = await new SqlProvisioner(connections.Provisioner()).AuthenticateAsync(ct);
+        await using var lease = await OperationLease.AcquireAsync(connections.Platform("operator"), "platform-identity", ct);
+        await RequireInstallationAsync(installationId, ct);
+        await VerifyAsync(connections, deployment, ct);
+        if (tenantId == Guid.Empty) throw new TenantContractException("tenant_not_found");
+        await InMaintenanceAsync(installationId, provider => RegisterClientsAsync(provider, tenantId, ct), ct);
+        await lease.AssertHeldAsync(ct);
+        await using var db = TenancyConnections.PlatformContext(connections.Platform("operator"));
+        db.Audit.Add(new OperationalAudit { Actor = actor, OperationId = Guid.NewGuid(), Action = "IdentityClientRegistered", OccurredAt = DateTimeOffset.UtcNow });
+        await db.SaveChangesAsync(ct);
+    }
+
+    private async Task RequireInstallationAsync(Guid installationId, CancellationToken ct)
+    {
+        await using var db = TenancyConnections.PlatformContext(connections.Platform("migrator"));
+        var bootstrap = await db.Bootstrap.AsNoTracking().SingleAsync(ct);
+        if (installationId == Guid.Empty || !bootstrap.Completed || bootstrap.BaselineVersion != 1 || bootstrap.InstallationId != installationId)
+            throw new TenantContractException("platform_not_ready");
+    }
+
+    private async Task RegisterClientsAsync(IServiceProvider provider, Guid? selectedTenant, CancellationToken ct)
     {
         await using var db = TenancyConnections.PlatformContext(connections.Platform("migrator"));
         var applications = provider.GetRequiredService<IOpenIddictApplicationManager>();
-        foreach (var tenant in await db.Tenants.AsNoTracking().ToArrayAsync(ct))
+        var query = db.Tenants.AsNoTracking();
+        if (selectedTenant.HasValue) query = query.Where(x => x.Id == selectedTenant.Value);
+        var tenants = await query.ToArrayAsync(ct);
+        if (selectedTenant.HasValue && tenants.Length != 1) throw new TenantContractException("tenant_not_found");
+        foreach (var tenant in tenants)
         {
             TenantDatabaseVerifier.ValidateRegistration(tenant);
             var client = new IdentityClient

@@ -108,12 +108,12 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         });
         builder.Logging.ClearProviders();
         builder.WebHost.UseTestServer();
-        // The product-host case starts against the existing M1 composition first:
-        // its closed HTTP boundary must fail the new identity integration contract.
-        if (_productHost)
-            NativeServices.Add(builder.Services, new RegistryShellSettings(new TenancyConnections()), runtimeRoutes: true);
-        else NativeServices.Add(builder.Services, new HttpPocShellSettings(Settings()));
-        builder.Services.AddSaasIdentity(Deployment, Clock);
+        if (_productHost) IdentityRuntimeHost.Configure(builder, Deployment, Clock);
+        else
+        {
+            NativeServices.Add(builder.Services, new HttpPocShellSettings(Settings()));
+            builder.Services.AddSaasIdentity(Deployment, Clock);
+        }
         builder.Services.AddOrchardCore().ConfigureServices(services => services.Configure<OpenIdConnectOptions>(IdentityNames.Oidc, options =>
         {
             // The handler still performs discovery, signature validation and code redemption over HTTP.
@@ -126,8 +126,8 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
             };
         }));
         _application = builder.Build();
-        if (_productHost) _application.Use(RuntimeBoundary.EnterAsync);
-        _application.UseOrchardCore();
+        if (_productHost) IdentityRuntimeHost.Use(_application);
+        else _application.UseOrchardCore();
         _application.Run(context => { context.Response.StatusCode = 404; return Task.CompletedTask; });
         await _application.StartAsync();
     }
