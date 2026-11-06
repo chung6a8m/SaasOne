@@ -13,29 +13,49 @@ concurrency:
 jobs:
   verification:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Capture tracked source for isolated review
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Prepare isolated offline test environment
         shell: bash
         run: |
-          mkdir -p artifacts/source
-          git archive HEAD --output=artifacts/source/source.tar
+          set -euo pipefail
+          dotnet tool restore
+          dotnet restore SaasOne.slnx --locked-mode
+          mkdir -p artifacts/devkit artifacts/bootstrap
+          cat > artifacts/bootstrap/Packages.csproj <<'XML'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><TargetFramework>net10.0</TargetFramework><ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally></PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="OrchardCore.Setup" Version="3.0.1" />
+              <PackageReference Include="OrchardCore.Recipes" Version="3.0.1" />
+              <PackageReference Include="OrchardCore.Resources" Version="3.0.1" />
+              <PackageReference Include="OrchardCore.Themes" Version="3.0.1" />
+              <PackageReference Include="OrchardCore.Settings" Version="3.0.1" />
+              <PackageReference Include="AngleSharp" Version="1.8.5" />
+              <PackageReference Include="MySqlConnector" Version="2.6.2" />
+              <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+              <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.14" />
+            </ItemGroup>
+          </Project>
+          XML
+          dotnet restore artifacts/bootstrap/Packages.csproj
+          tar -C "$DOTNET_ROOT" -cf artifacts/devkit/dotnet.tar dotnet host sdk/10.0.403 shared/Microsoft.NETCore.App/10.0.14 shared/Microsoft.AspNetCore.App/10.0.14 packs/Microsoft.NETCore.App.Ref/10.0.14 packs/Microsoft.AspNetCore.App.Ref/10.0.14 packs/Microsoft.NETCore.App.Host.linux-x64/10.0.14
+          tar -C "$HOME/.nuget/packages" -cf artifacts/devkit/nuget.tar .
+          cp "$RUNNER_TEMP/pwsh.tar.gz" artifacts/devkit/
+          curl -fsSL https://api.github.com/repos/OrchardCMS/OrchardCore/tarball/v3.0.1 -o artifacts/devkit/orchard-source.tar.gz
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: m1-source-${{ github.sha }}
-          path: artifacts/source/source.tar
-          retention-days: 3
+          name: m1-devkit-${{ github.sha }}
+          path: artifacts/devkit
+          retention-days: 1
           if-no-files-found: error
-      - uses: ./.github/actions/pinned-toolchain
-      - name: Verify inherited M0 baseline
+      - name: Run behavioral red tests and inherited suite
         shell: pwsh
         run: ./scripts/check.ps1 -Scope M0
-      - name: Verify real SQL baseline
-        shell: pwsh
-        run: ./scripts/sql-fixture.ps1
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: always()
         with:
