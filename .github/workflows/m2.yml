@@ -20,17 +20,17 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/pinned-toolchain
       - name: Foundation, inherited SQL gates and complete M2 identity acceptance
-        shell: bash
-        run: |
-          mkdir -p artifacts/logs
-          pwsh -NoProfile -File scripts/check-m2.ps1 > artifacts/logs/m2.log 2>&1 || { tail -120 artifacts/logs/m2.log; exit 1; }
-          tail -40 artifacts/logs/m2.log
-      - name: Retain concise machine-readable gate evidence even on failure
+        shell: pwsh
+        # Stream directly to the runner so add-mask directives are processed.
+        # Never archive raw stdout: masking directives contain ephemeral secrets.
+        run: ./scripts/check-m2.ps1
+      - name: Retain machine-readable gate evidence even on failure
         if: always()
         shell: pwsh
         run: |
-          if (Test-Path artifacts/verification/m2-poc.json) {
-              Get-Content artifacts/verification/m2-poc.json -Raw
+          foreach ($file in @('m0.json', 'sql-command.json', 'm1-sql.json', 'm2-poc.json')) {
+              $path = Join-Path artifacts/verification $file
+              if (Test-Path $path) { Get-Content $path -Raw }
           }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
@@ -39,5 +39,4 @@ jobs:
           path: |
             artifacts/verification
             artifacts/test-results
-            artifacts/logs
           if-no-files-found: error

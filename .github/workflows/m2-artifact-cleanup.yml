@@ -1,0 +1,34 @@
+name: M2 one-time development artifact cleanup
+on:
+  push:
+    branches: [feat/m2-identity-poc]
+    paths: [.github/workflows/m2-artifact-cleanup.yml]
+permissions: {}
+jobs:
+  cleanup:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Remove only the four known development runs' raw-log artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo='chung6a8m/SaasOne'
+          for run in 42258863312 42258872519 42259545489 42259553637; do
+            metadata="$(gh api "repos/$repo/actions/runs/$run")"
+            jq -e '.workflow_id == 409542461 and .status == "completed"' <<< "$metadata" > /dev/null
+            artifacts="$(gh api "repos/$repo/actions/runs/$run/artifacts?per_page=100")"
+            jq -e '.total_count <= 100' <<< "$artifacts" > /dev/null
+            ids="$(jq -r '.artifacts[] | select(.name | startswith("m2-verification-")) | .id' <<< "$artifacts")"
+            for id in $ids; do
+              [[ "$id" =~ ^[0-9]+$ ]]
+              gh api --method DELETE "repos/$repo/actions/artifacts/$id"
+              echo "Removed development artifact $id from run $run"
+            done
+            gh api "repos/$repo/actions/runs/$run/artifacts?per_page=100" | jq -e '[.artifacts[] | select(.name | startswith("m2-verification-"))] | length == 0' > /dev/null
+            echo "Verified no raw-log verification artifact remains for run $run"
+          done
