@@ -15,7 +15,10 @@ public sealed class MigrationSnapshotTests
         using DbContext context = platform ? new PlatformDesignTimeFactory().CreateDbContext([]) : new TenantDesignTimeFactory().CreateDbContext([]);
         var assembly = context.GetService<IMigrationsAssembly>();
         Assert.NotNull(assembly.ModelSnapshot);
-        Assert.Single(assembly.Migrations);
+        string[] expected = platform
+            ? ["20261106135648_PlatformBaselineV1", "20261106180112_IdentityAuthority"]
+            : ["20261106135652_TenantBaselineV1"];
+        Assert.Equal(expected, assembly.Migrations.Keys.Order(StringComparer.Ordinal).ToArray());
         Assert.False(context.Database.HasPendingModelChanges());
     }
 }
