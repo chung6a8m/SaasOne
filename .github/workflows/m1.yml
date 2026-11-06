@@ -43,17 +43,53 @@ jobs:
           </Project>
           XML
           dotnet restore artifacts/bootstrap/Packages.csproj
-          tar -C "$DOTNET_ROOT" -cf artifacts/devkit/dotnet.tar dotnet host sdk/10.0.403 shared/Microsoft.NETCore.App/10.0.14 shared/Microsoft.AspNetCore.App/10.0.14 packs/Microsoft.NETCore.App.Ref/10.0.14 packs/Microsoft.AspNetCore.App.Ref/10.0.14 packs/Microsoft.NETCore.App.Host.linux-x64/10.0.14
-          tar -C "$HOME/.nuget/packages" -cf artifacts/devkit/nuget.tar .
+          tar -C "$DOTNET_ROOT" -czf artifacts/devkit/dotnet.tar.gz dotnet host sdk/10.0.403 shared/Microsoft.NETCore.App/10.0.14 shared/Microsoft.AspNetCore.App/10.0.14 packs/Microsoft.NETCore.App.Ref/10.0.14 packs/Microsoft.AspNetCore.App.Ref/10.0.14 packs/Microsoft.NETCore.App.Host.linux-x64/10.0.14
+          tar -C "$HOME/.nuget/packages" -czf artifacts/devkit/nuget.tar.gz .
+          split -b 450M artifacts/devkit/nuget.tar.gz artifacts/devkit/nuget-part-
+          rm artifacts/devkit/nuget.tar.gz
           cp "$RUNNER_TEMP/pwsh.tar.gz" artifacts/devkit/
           curl -fsSL https://api.github.com/repos/OrchardCMS/OrchardCore/tarball/v3.0.1 -o artifacts/devkit/orchard-source.tar.gz
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+          git archive HEAD --output=artifacts/devkit/source.tar
+          du -h artifacts/devkit/*
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: m1-devkit-${{ github.sha }}
-          path: artifacts/devkit
+          name: m1-sdk-${{ github.sha }}
+          path: artifacts/devkit/dotnet.tar.gz
           retention-days: 1
+          compression-level: 0
           if-no-files-found: error
-      - name: Run behavioral red tests and inherited suite
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m1-tools-${{ github.sha }}
+          path: |
+            artifacts/devkit/pwsh.tar.gz
+            artifacts/devkit/orchard-source.tar.gz
+            artifacts/devkit/source.tar
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m1-nuget-0-${{ github.sha }}
+          path: artifacts/devkit/nuget-part-aa
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m1-nuget-1-${{ github.sha }}
+          path: artifacts/devkit/nuget-part-ab
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m1-nuget-2-${{ github.sha }}
+          path: artifacts/devkit/nuget-part-ac
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Verify host boundary and inherited suite
         shell: pwsh
         run: ./scripts/check.ps1 -Scope M0
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
