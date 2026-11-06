@@ -11,7 +11,7 @@ $previousSa = $env:MSSQL_SA_PASSWORD
 $previousConnection = $env:SAAS_M1_ADMIN_CONNECTION
 $started = $false
 $code = 1
-$report = [ordered]@{ scope = 'M1 SQL'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null; testExitCode = $null; cleanupExitCode = $null; total = 0; executed = 0; passed = 0; failed = 0; skipped = 0 }
+$report = [ordered]@{ scope = 'M1 SQL'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null; testExitCode = $null; cleanupExitCode = $null; total = 0; executed = 0; passed = 0; failed = 0; skipped = 0; mandatoryCases = @() }
 Push-Location $root
 try {
     New-Item artifacts/verification -ItemType Directory -Force | Out-Null
@@ -47,7 +47,23 @@ try {
     $counters = $trx.TestRun.ResultSummary.Counters
     foreach ($counter in @('total', 'executed', 'passed', 'failed')) { $report[$counter] = [int]$counters.$counter }
     $report.skipped = $report.total - $report.executed
-    if ($report.testExitCode -ne 0 -or $report.total -lt 1 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) { throw 'M1 SQL tests did not all execute and pass.' }
+    if ($report.testExitCode -ne 0 -or $report.total -lt 38 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) { throw 'All 38 or more mandatory M1 SQL cases must execute and pass.' }
+    $required = @(
+        'Four_real_customer_databases_are_provisioned_and_routed_through_Orchard',
+        'Concurrent_retry_cannot_take_over_a_live_owner',
+        'A_newer_suspension_wins_over_inflight_provision_completion',
+        'Audit_failure_cannot_publish_a_successful_checkpoint_and_retry_can_reconcile',
+        'A_newly_provisioned_tenant_is_available_without_restarting_the_host',
+        'Fresh_runtime_processes_start_with_only_low_privilege_connections',
+        'Wrong_database_TenantId_and_nonce_are_rejected_without_overwriting_identity',
+        'An_existing_seed_baseline_prevents_retry_from_repairing_missing_native_history',
+        'A_still_active_tagged_SQL_owner_and_cross_host_takeover_are_both_rejected'
+    )
+    foreach ($case in $required) {
+        $matches = @($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName.EndsWith('.' + $case, [StringComparison]::Ordinal) -and $_.outcome -eq 'Passed' })
+        if ($matches.Count -ne 1) { throw "Missing mandatory passing evidence: $case" }
+    }
+    $report.mandatoryCases = $required
     $report.digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot record image identity.' }
     $code = 0

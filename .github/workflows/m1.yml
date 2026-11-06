@@ -1,7 +1,7 @@
 name: M1 tenancy
 on:
   push:
-    branches: [feat/m1-tenancy-provisioning]
+    branches: [main, feat/m1-tenancy-provisioning]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -25,6 +25,21 @@ jobs:
           mkdir -p artifacts/logs
           pwsh -NoProfile -File scripts/check.ps1 -Scope M0 > artifacts/logs/foundation.log 2>&1 || { tail -100 artifacts/logs/foundation.log; exit 1; }
           tail -25 artifacts/logs/foundation.log
+      - name: Validate retained migration snapshots and scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          foreach ($context in @('PlatformDbContext', 'TenantDbContext')) {
+              & dotnet ef migrations has-pending-model-changes --project src/Platform/SaaS.Tenancy --context $context --configuration Release --no-build
+              if ($LASTEXITCODE -ne 0) { throw "Snapshot/model mismatch: $context" }
+          }
+          foreach ($script in Get-ChildItem scripts -Filter *.ps1) {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+              if ($errors.Count -ne 0) { throw "PowerShell syntax errors: $($script.Name)" }
+          }
       - name: Real SQL baseline
         shell: pwsh
         run: ./scripts/sql-fixture.ps1

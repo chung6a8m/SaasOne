@@ -1,8 +1,10 @@
+using Microsoft.EntityFrameworkCore;
 using OrchardCore.Data.Migration;
 using OrchardCore.Environment.Shell.Builders;
 using OrchardCore.Environment.Shell.Descriptor;
 using OrchardCore.Environment.Shell.Descriptor.Models;
 using SaaS.Abstractions.Tenancy;
+using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Operations;
 namespace SaaS.Web.Orchard;
 
@@ -10,6 +12,14 @@ public sealed class OrchardMaintenance : IOrchardMaintenance
 {
     public async Task<OrchardBaseline> InitializeAsync(string shell, string prefix, Guid tenantId, string connection, CancellationToken cancellationToken)
     {
+        if (shell != "Default")
+        {
+            await using var customer = TenancyConnections.CustomerContext(connection);
+            // Once the seed baseline exists, initialization has already succeeded. A retry may verify it,
+            // but must never recreate missing native history or reset a changed descriptor.
+            if (await customer.Baseline.AsNoTracking().AnyAsync(cancellationToken))
+                return await VerifyAsync(shell, prefix, tenantId, connection, cancellationToken);
+        }
         await InShellAsync(shell, prefix, tenantId, connection, async provider =>
         {
             var manager = provider.GetRequiredService<IShellDescriptorManager>();
@@ -24,7 +34,6 @@ public sealed class OrchardMaintenance : IOrchardMaintenance
 
     public async Task<OrchardBaseline> VerifyAsync(string shell, string prefix, Guid tenantId, string connection, CancellationToken cancellationToken)
     {
-        // Inspect persisted state before building a runtime shell: missing/changed data never triggers repair.
         var result = await FoundationProfile.ReadSnapshotAsync(connection, cancellationToken);
         await InShellAsync(shell, prefix, tenantId, connection, async provider =>
         {
@@ -47,14 +56,14 @@ public sealed class OrchardMaintenance : IOrchardMaintenance
             ContentRootPath = AppContext.BaseDirectory,
             EnvironmentName = Environments.Production
         });
-        builder.Logging.ClearProviders(); // Never emit provider exceptions or connection material from maintenance.
+        builder.Logging.ClearProviders();
         NativeServices.Add(builder.Services, new SingleShellSettings(settings));
-        await using var application = builder.Build(); // Deliberately never starts an HTTP listener.
+        await using var application = builder.Build(); // Private maintenance never starts an HTTP listener.
         var factory = application.Services.GetRequiredService<IShellContextFactory>();
         var descriptor = new ShellDescriptor { Features = FoundationProfile.Features.Select(feature => new ShellFeature(feature)).ToList() };
         await using var context = await factory.CreateDescribedContextAsync(settings, descriptor);
         var scope = await context.CreateScopeAsync();
-        // Do not detach native work on cancellation: the process/SQL fence remains held until disposal completes.
+        // Do not detach native work on cancellation: the operation fence outlives native work and disposal.
         await scope.UsingServiceScopeAsync(async current => await action(current.ServiceProvider));
         cancellationToken.ThrowIfCancellationRequested();
     }
