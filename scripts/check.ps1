@@ -18,7 +18,7 @@ function Invoke-Checked {
 Push-Location $root
 try {
     if ($Scope -eq 'SqlSmoke') {
-        // A blocked or failed attempt must not inherit a previous successful probe.
+        # A blocked or failed attempt must not inherit a previous successful probe.
         $sqlEvidence = Join-Path $root 'artifacts/verification/sql-smoke.json'
         if (Test-Path $sqlEvidence) { Remove-Item $sqlEvidence -Force }
     }
