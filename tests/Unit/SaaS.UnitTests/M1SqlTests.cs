@@ -19,7 +19,7 @@ public sealed class M1SqlCollection { }
 
 [Collection("M1 SQL")]
 [Trait("Category", "SqlM1")]
-public sealed class M1SqlTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixture>
+public sealed partial class M1SqlTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixture>
 {
     private M1SqlEnvironment Environment => fixture.Environment;
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -318,10 +318,13 @@ public sealed class M1SqlTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixtur
     [Fact]
     public async Task A_newly_provisioned_tenant_is_available_without_restarting_the_host()
     {
-        await AssertReady(Alpha); // Force initial native shell inventory before the new registration.
-        var tenant = Environment.NewTenant("new-live");
-        Assert.Equal(0, await MaintenanceCommand.RunAsync(Environment.ProvisionArguments(tenant), Ct));
-        await AssertReady(tenant);
+        // Environment-only adapter: the future tenant's runtime secret MUST precede HTTP startup.
+        var tenant = Environment.NewTenant("preloaded-live");
+        await using var runtime = await M1ChildHost.StartRuntimeAsync(Ct);
+        await runtime.AssertReadyAsync(Beta, Ct); // Initialize the real native inventory before provisioning.
+        await runtime.AssertStatusAsync($"/{tenant.Slug}/health/ready", HttpStatusCode.NotFound, Ct);
+        Assert.Equal(0, await M1ChildHost.ProvisionAsync(Environment.ProvisionArguments(tenant), Ct));
+        await runtime.AssertReadyAsync(tenant, Ct); // Same HTTP child; maintenance ran in a separate process.
     }
 
     [Fact]

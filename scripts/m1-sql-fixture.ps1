@@ -47,7 +47,7 @@ try {
     $counters = $trx.TestRun.ResultSummary.Counters
     foreach ($counter in @('total', 'executed', 'passed', 'failed')) { $report[$counter] = [int]$counters.$counter }
     $report.skipped = $report.total - $report.executed
-    if ($report.testExitCode -ne 0 -or $report.total -lt 38 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) { throw 'All 38 or more mandatory M1 SQL cases must execute and pass.' }
+    if ($report.testExitCode -ne 0 -or $report.total -lt 48 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) { throw 'All 48 or more mandatory M1 SQL cases must execute and pass.' }
     $required = @(
         'Four_real_customer_databases_are_provisioned_and_routed_through_Orchard',
         'Concurrent_retry_cannot_take_over_a_live_owner',
@@ -57,13 +57,19 @@ try {
         'Fresh_runtime_processes_start_with_only_low_privilege_connections',
         'Wrong_database_TenantId_and_nonce_are_rejected_without_overwriting_identity',
         'An_existing_seed_baseline_prevents_retry_from_repairing_missing_native_history',
-        'A_still_active_tagged_SQL_owner_and_cross_host_takeover_are_both_rejected'
+        'A_still_active_tagged_SQL_owner_and_cross_host_takeover_are_both_rejected',
+        'Named_shell_lookup_and_names_do_not_resolve_unrelated_secrets',
+        'Invalid_customer_registration_does_not_block_other_shells',
+        'Corrupt_platform_baseline_keeps_all_readiness_closed',
+        'Late_runtime_secret_requires_a_controlled_process_restart'
     )
     foreach ($case in $required) {
         $matches = @($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName.EndsWith('.' + $case, [StringComparison]::Ordinal) -and $_.outcome -eq 'Passed' })
         if ($matches.Count -ne 1) { throw "Missing mandatory passing evidence: $case" }
     }
-    $report.mandatoryCases = $required
+    $isolation = @($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName -like '*.Cold_start_isolates_a_customer_secret_fault(*' })
+    if ($isolation.Count -ne 6 -or @($isolation | Where-Object { $_.outcome -ne 'Passed' }).Count -ne 0) { throw 'All six cold-process secret/lifecycle isolation cases must pass.' }
+    $report.mandatoryCases = $required + @($isolation | ForEach-Object { $_.testName })
     $report.digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot record image identity.' }
     $code = 0
