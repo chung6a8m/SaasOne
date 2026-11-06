@@ -127,6 +127,7 @@ public sealed class SqlFixtureTests
 
         private void WriteExecutable(string name, string content)
         {
+            if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("POSIX shim cannot run on Windows.");
             var path = Path.Combine(binaries, name);
             File.WriteAllText(path, content);
             File.SetUnixFileMode(path,
