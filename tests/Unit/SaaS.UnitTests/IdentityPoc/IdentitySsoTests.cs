@@ -21,19 +21,21 @@ public sealed partial class M2IdentityPocTests
             using var account = await browser.FollowAsync("/" + slug + "/account/login");
             Assert.Equal(HttpStatusCode.OK, account.StatusCode);
             var html = await account.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-            Assert.Contains(http.UserId.ToString("D"), html);
-            Assert.Contains(http.Tenant(slug).Id.ToString("D"), html);
+            Assert.True(html.Contains(http.UserId.ToString("D"), StringComparison.Ordinal), "Tenant page must show the mapped global account.");
+            Assert.True(html.Contains(http.Tenant(slug).Id.ToString("D"), StringComparison.Ordinal), "Tenant page must show its routed identity.");
             Assert.True(http.CapturedTokens.ContainsKey(slug), "Tenant client must redeem a real authorization code.");
         }
         Assert.Equal(1, browser.PasswordSubmissions);
         foreach (var slug in new[] { "alpha", "beta" })
         {
             var id = http.Tenant(slug).Id.ToString("D");
-            Assert.Contains(browser.SetCookies, value => value.StartsWith("__Secure-SaaS." + id + "=", StringComparison.Ordinal)
+            // Predicate assertions must not dump authentication-cookie collections on failure.
+            Assert.True(browser.SetCookies.Any(value => value.StartsWith("__Secure-SaaS." + id + "=", StringComparison.Ordinal)
                 && value.Contains("path=/" + slug + "/", StringComparison.OrdinalIgnoreCase)
-                && value.Contains("secure", StringComparison.OrdinalIgnoreCase) && value.Contains("httponly", StringComparison.OrdinalIgnoreCase));
+                && value.Contains("secure", StringComparison.OrdinalIgnoreCase) && value.Contains("httponly", StringComparison.OrdinalIgnoreCase)),
+                "The tenant must issue its own prefixed Secure/HttpOnly cookie.");
         }
-        Assert.Contains(browser.SetCookies, value => value.StartsWith("__Secure-SaaS.Issuer=", StringComparison.Ordinal));
+        Assert.True(browser.SetCookies.Any(value => value.StartsWith("__Secure-SaaS.Issuer=", StringComparison.Ordinal)), "The issuer must have an independent cookie.");
     }
 
     [Fact]
@@ -44,9 +46,9 @@ public sealed partial class M2IdentityPocTests
         await browser.LoginAsync(http);
         using var choices = await browser.GetAsync("/account/tenants");
         var html = await choices.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.Contains("/alpha/account/login", html);
-        Assert.Contains("/beta/account/login", html);
-        Assert.DoesNotContain("/gamma/account/login", html);
+        Assert.True(html.Contains("/alpha/account/login", StringComparison.Ordinal));
+        Assert.True(html.Contains("/beta/account/login", StringComparison.Ordinal));
+        Assert.False(html.Contains("/gamma/account/login", StringComparison.Ordinal));
         using var response = await browser.FollowAsync("/gamma/account/login");
         Assert.True((int)response.StatusCode is 400 or 401 or 403, "Missing membership must not create a tenant session.");
         Assert.False(http.CapturedTokens.ContainsKey("gamma"));
