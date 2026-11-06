@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Xunit;
 namespace SaaS.UnitTests;
 public sealed class ScriptTests
@@ -43,5 +44,19 @@ public sealed class ScriptTests
         var result = await Check("SqlSmoke", clearSql: true);
         Assert.NotEqual(0, result.Code);
         Assert.Contains("BLOCKED", result.Output);
+    }
+    [Fact]
+    public async Task Failed_sql_probe_cannot_retain_stale_pass_evidence()
+    {
+        var evidence = Path.Combine(Root(), "artifacts", "verification");
+        Directory.CreateDirectory(evidence);
+        var stale = Path.Combine(evidence, "sql-smoke.json");
+        File.WriteAllText(stale, "{\"status\":\"PASS\",\"sourceSha\":\"stale\"}");
+        var result = await Check("SqlSmoke", clearSql: true);
+        Assert.NotEqual(0, result.Code);
+        Assert.False(File.Exists(stale));
+        using var report = JsonDocument.Parse(File.ReadAllText(Path.Combine(evidence, "sql-command.json")));
+        Assert.Equal("BLOCKED", report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(2, report.RootElement.GetProperty("exitCode").GetInt32());
     }
 }
