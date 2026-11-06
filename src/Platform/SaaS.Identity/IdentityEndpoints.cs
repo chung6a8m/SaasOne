@@ -80,13 +80,13 @@ public static class IdentityEndpoints
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         var destinationAfterLogin = SafeReturn(context, form["returnUrl"].ToString());
         var username = form["username"].ToString();
-        var password = form["password"].ToString();
-        if (username.Length is < 1 or > 256 || password.Length is < 1 or > 1024 || form["username"].Count != 1 || form["password"].Count != 1)
+        var credential = form["password"].ToString();
+        if (username.Length is < 1 or > 256 || credential.Length is < 1 or > 1024 || form["username"].Count != 1 || form["password"].Count != 1)
             throw new IdentityDeniedException(401, "invalid_credentials");
         var users = context.RequestServices.GetRequiredService<UserManager<IUser>>();
         var signin = context.RequestServices.GetRequiredService<SignInManager<IUser>>();
         var user = await users.FindByNameAsync(username);
-        if (user is not User { IsEnabled: true } || !(await signin.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true)).Succeeded)
+        if (user is not User { IsEnabled: true } || !(await signin.CheckPasswordSignInAsync(user, credential, lockoutOnFailure: true)).Succeeded)
         {
             await context.RequestServices.GetRequiredService<YesSql.ISession>().SaveChangesAsync();
             throw new IdentityDeniedException(401, "invalid_credentials");
