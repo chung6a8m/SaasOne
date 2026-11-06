@@ -13,86 +13,19 @@ concurrency:
 jobs:
   verification:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
       - uses: ./.github/actions/pinned-toolchain
-      - name: Prepare isolated offline test environment
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet tool restore
-          dotnet restore SaasOne.slnx --locked-mode
-          mkdir -p artifacts/devkit artifacts/bootstrap
-          cat > artifacts/bootstrap/Packages.csproj <<'XML'
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net10.0</TargetFramework><ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally></PropertyGroup>
-            <ItemGroup>
-              <PackageReference Include="OrchardCore.Setup" Version="3.0.1" />
-              <PackageReference Include="OrchardCore.Recipes" Version="3.0.1" />
-              <PackageReference Include="OrchardCore.Resources" Version="3.0.1" />
-              <PackageReference Include="OrchardCore.Themes" Version="3.0.1" />
-              <PackageReference Include="OrchardCore.Settings" Version="3.0.1" />
-              <PackageReference Include="AngleSharp" Version="1.8.5" />
-              <PackageReference Include="MySqlConnector" Version="2.6.2" />
-              <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
-              <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.14" />
-            </ItemGroup>
-          </Project>
-          XML
-          dotnet restore artifacts/bootstrap/Packages.csproj
-          tar -C "$DOTNET_ROOT" -czf artifacts/devkit/dotnet.tar.gz dotnet host sdk/10.0.403 shared/Microsoft.NETCore.App/10.0.14 shared/Microsoft.AspNetCore.App/10.0.14 packs/Microsoft.NETCore.App.Ref/10.0.14 packs/Microsoft.AspNetCore.App.Ref/10.0.14 packs/Microsoft.NETCore.App.Host.linux-x64/10.0.14
-          tar -C "$HOME/.nuget/packages" -czf artifacts/devkit/nuget.tar.gz .
-          split -b 450M artifacts/devkit/nuget.tar.gz artifacts/devkit/nuget-part-
-          rm artifacts/devkit/nuget.tar.gz
-          cp "$RUNNER_TEMP/pwsh.tar.gz" artifacts/devkit/
-          curl -fsSL https://api.github.com/repos/OrchardCMS/OrchardCore/tarball/v3.0.1 -o artifacts/devkit/orchard-source.tar.gz
-          git archive HEAD --output=artifacts/devkit/source.tar
-          du -h artifacts/devkit/*
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: m1-sdk-${{ github.sha }}
-          path: artifacts/devkit/dotnet.tar.gz
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: m1-tools-${{ github.sha }}
-          path: |
-            artifacts/devkit/pwsh.tar.gz
-            artifacts/devkit/orchard-source.tar.gz
-            artifacts/devkit/source.tar
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: m1-nuget-0-${{ github.sha }}
-          path: artifacts/devkit/nuget-part-aa
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: m1-nuget-1-${{ github.sha }}
-          path: artifacts/devkit/nuget-part-ab
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: m1-nuget-2-${{ github.sha }}
-          path: artifacts/devkit/nuget-part-ac
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: ignore
-      - name: Verify host boundary and inherited suite
+      - name: Locked build, behavioral tests and architecture
         shell: pwsh
         run: ./scripts/check.ps1 -Scope M0
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - name: Real SQL baseline
+        shell: pwsh
+        run: ./scripts/sql-fixture.ps1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
           name: m1-verification-${{ github.sha }}-${{ github.run_attempt }}
