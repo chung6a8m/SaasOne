@@ -1,0 +1,44 @@
+name: M2 identity PoC
+on:
+  push:
+    branches: [feat/m2-identity-poc]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m2-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-snapshot:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Archive tracked source for reproducible review
+        shell: bash
+        run: |
+          mkdir -p artifacts/source
+          git archive --format=zip HEAD -o artifacts/source/source.zip
+          git rev-parse HEAD > artifacts/source/commit.txt
+          sha256sum artifacts/source/source.zip > artifacts/source/SHA256SUMS
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m2-source-${{ github.sha }}
+          path: artifacts/source
+          if-no-files-found: error
+  poc-gate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: M2 gate must exist and execute, never pass an empty scaffold
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path scripts/check-m2.ps1)) { throw 'BLOCKED: M2 PoC gate is not implemented yet.' }
+          ./scripts/check-m2.ps1
