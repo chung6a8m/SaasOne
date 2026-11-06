@@ -4,6 +4,9 @@
     <PackageReference Include="OrchardCore.Application.Targets" />
     <PackageReference Include="OrchardCore.Infrastructure" />
     <PackageReference Include="OrchardCore.OpenId" />
+    <PackageReference Include="OrchardCore.Users" />
+    <PackageReference Include="OrchardCore.Roles" />
+    <PackageReference Include="OrchardCore.Settings" />
     <ProjectReference Include="../Platform/SaaS.Tenancy/SaaS.Tenancy.csproj" />
     <ProjectReference Include="../Platform/SaaS.Identity/SaaS.Identity.csproj" />
     <ProjectReference Include="../Platform/SaaS.AccessControl/SaaS.AccessControl.csproj" />
