@@ -26,7 +26,10 @@ public static class IdentityRegistration
         services.TryAddSingleton(clock ?? TimeProvider.System);
         services.TryAddSingleton<TenancyConnections>();
         services.AddHttpContextAccessor();
-        var orchard = services.AddOrchardCore();
+        // Native Users resolves SiteService, whose document manager requires Orchard's
+        // tenant-local caching/document infrastructure in both maintenance and HTTP hosts.
+        // This is not an authorization cache; security authority still reads fresh stores.
+        var orchard = services.AddOrchardCore().AddCaching();
         orchard.ConfigureServices((tenant, preliminary) =>
         {
             var configuredShell = preliminary.GetRequiredService<ShellSettings>();
