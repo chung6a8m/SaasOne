@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using OpenIddict.Abstractions;
+using OrchardCore.Environment.Shell;
 using OrchardCore.Users;
 using SaaS.Identity;
 using Xunit;
