@@ -20,7 +20,7 @@ public static class IdentityRuntimeHost
         builder.Services.AddSaasIdentity(deployment, clock);
         // Framework request/protocol/SQL diagnostics can contain query credentials,
         // cookie values or serialized documents. Emit only our sanitized event codes.
-        foreach (var category in new[] { "Microsoft.AspNetCore", "Microsoft.EntityFrameworkCore", "Microsoft.IdentityModel", "OpenIddict", "OrchardCore", "YesSql" })
+        foreach (var category in new[] { "Microsoft.AspNetCore", "Microsoft.EntityFrameworkCore", "Microsoft.IdentityModel", "OpenIddict", "OrchardCore", "YesSql", "System.Net.Http.HttpClient" })
             builder.Logging.AddFilter(category, LogLevel.None);
     }
 
@@ -113,6 +113,10 @@ internal static class IdentityRuntimeBoundary
             await TenancyConnections.VerifySchemaAsync(platform, ct);
             await FoundationProfile.ReadSnapshotAsync(platformConnection, ct);
             await IdentityInstaller.VerifyAsync(connections, deployment, ct);
+            // Check the independent platform registry BEFORE native handlers can emit
+            // an authorization code or even an OAuth error to a drifted native URI.
+            if (issuer && path is "/connect/authorize" or "/connect/logout")
+                await DemandRegisteredCallbackAsync(context, platform, deployment, path == "/connect/logout");
             ShellSettings expected;
             if (issuer)
             {
@@ -179,11 +183,44 @@ internal static class IdentityRuntimeBoundary
             await next(context);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { context.Abort(); }
+        catch (IdentityDeniedException denied)
+        {
+            if (context.Response.HasStarted) { context.Abort(); return; }
+            context.Response.StatusCode = denied.StatusCode;
+            await context.Response.WriteAsJsonAsync(new { error = denied.Code, correlationId = context.TraceIdentifier }, ct);
+        }
         catch
         {
             if (context.Response.HasStarted) { context.Abort(); return; }
             context.Response.StatusCode = 503;
             await context.Response.WriteAsJsonAsync(new { error = "identity_dependency_unavailable", correlationId = context.TraceIdentifier }, ct);
         }
+    }
+
+    private static async Task DemandRegisteredCallbackAsync(HttpContext context, PlatformDbContext platform, IdentityDeployment deployment, bool logout)
+    {
+        IFormCollection? form = null;
+        if (HttpMethods.IsPost(context.Request.Method))
+        {
+            if (!context.Request.HasFormContentType) throw new IdentityDeniedException(400, "invalid_request");
+            form = await context.Request.ReadFormAsync(context.RequestAborted);
+        }
+        string? Single(string name)
+        {
+            var query = context.Request.Query[name];
+            var body = form?[name] ?? default;
+            if (query.Count + body.Count > 1) throw new IdentityDeniedException(400, "invalid_request");
+            return query.Count + body.Count == 0 ? null : (query.Count == 1 ? query : body).ToString();
+        }
+        var redirect = Single(logout ? "post_logout_redirect_uri" : "redirect_uri");
+        if (logout && redirect is null) return; // Local end-session still requires native validation and CSRF.
+        var clientId = Single("client_id");
+        if (string.IsNullOrEmpty(clientId) || clientId.Length > 200 || string.IsNullOrEmpty(redirect) || redirect.Length > 2048)
+            throw new IdentityDeniedException(400, "invalid_callback");
+        var client = await platform.IdentityClients.AsNoTracking().SingleOrDefaultAsync(x => x.ClientId == clientId, context.RequestAborted);
+        if (client is null || !client.Enabled) throw new IdentityDeniedException(400, "invalid_callback");
+        deployment.ValidateClient(client);
+        if (!string.Equals(redirect, logout ? client.LogoutRedirectUri : client.RedirectUri, StringComparison.Ordinal))
+            throw new IdentityDeniedException(400, "invalid_callback");
     }
 }

@@ -29,10 +29,22 @@ $required = @(
     'Required_source_failure_returns_dependency_unavailable_without_cached_allow',
     'Restart_preserves_revocation_and_persisted_key_validation',
     'Callback_logout_and_return_urls_are_strictly_allowlisted',
-    'Mutation_requires_antiforgery_and_two_tabs_keep_their_context'
+    'Mutation_requires_antiforgery_and_two_tabs_keep_their_context',
+    'Native_password_lockout_then_unlock_does_not_revive_prior_grants',
+    'Native_access_token_revocation_also_invalidates_its_related_web_session',
+    'Native_access_revocation_reaches_web_first_and_survives_restart',
+    'Normal_access_expiry_does_not_shorten_the_independent_web_session',
+    'Explicit_clock_is_shared_by_the_authority_in_every_shell',
+    'Identity_runtime_cannot_manage_memberships_clients_registry_or_schema',
+    'Completed_identity_initialization_is_verify_only_when_native_history_is_missing',
+    'Completed_identity_retry_is_read_only_and_does_not_resolve_client_secrets',
+    'Product_host_supports_Sso_Api_and_refresh_with_only_runtime_credentials',
+    'Product_readiness_and_login_close_when_native_history_is_corrupt',
+    'Private_identity_commands_revoke_membership_and_account_without_restoring_old_grants',
+    'Product_host_rejects_a_native_callback_that_is_not_in_the_authoritative_registry'
 )
 $report = [ordered]@{
-    scope = 'M2 PoC'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null
+    scope = 'M2 identity'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null
     command = 'dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter Category=SqlM2 --logger trx --results-directory artifacts/test-results/m2-poc'
     testExitCode = $null; cleanupExitCode = $null; total = 0; executed = 0; passed = 0; failed = 0; skipped = 0
     mandatoryCases = @($required | ForEach-Object { [ordered]@{ name = $_; discovered = 0; outcome = 'NotExecuted' } })
@@ -85,9 +97,9 @@ try {
     })
     $report.missingMandatoryCases = @($report.mandatoryCases | Where-Object { $_.discovered -eq 0 } | ForEach-Object { $_.name })
     # Record the full missing/failed inventory BEFORE throwing. Passing native-store
-    # subtests must never masquerade as passing API/web/PKCE acceptance cases.
+    # subtests must never masquerade as passing API/web/PKCE/production acceptance cases.
     if ($report.testExitCode -ne 0 -or $report.total -lt 1 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) {
-        throw 'Every discovered M2 PoC case must execute and pass.'
+        throw 'Every discovered M2 identity case must execute and pass.'
     }
     if (@($report.mandatoryCases | Where-Object { $_.outcome -cne 'Passed' }).Count -ne 0) {
         throw 'BLOCKED: mandatory end-to-end M2 identity evidence is missing or invalid.'

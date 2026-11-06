@@ -43,9 +43,10 @@ public sealed partial class M2IdentityPocTests
         using var page = await browser.FollowAsync("/alpha/account/login");
         Assert.Equal(HttpStatusCode.OK, page.StatusCode);
         var html = await page.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.Contains(firstId.ToString("D"), html);
-        Assert.DoesNotContain(secondId.ToString("D"), html);
-        Assert.DoesNotContain(thirdId.ToString("D"), html);
+        // HTML contains antiforgery material; assertion diagnostics must not dump it.
+        Assert.True(html.Contains(firstId.ToString("D"), StringComparison.Ordinal));
+        Assert.False(html.Contains(secondId.ToString("D"), StringComparison.Ordinal));
+        Assert.False(html.Contains(thirdId.ToString("D"), StringComparison.Ordinal));
     }
 
     [Fact]
@@ -148,8 +149,8 @@ public sealed partial class M2IdentityPocTests
                 using var page = await browser.GetAsync("/" + slug + "/account");
                 Assert.Equal(HttpStatusCode.OK, page.StatusCode);
                 var html = await page.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-                Assert.Contains(http.Tenant(slug).Id.ToString("D"), html);
-                Assert.DoesNotContain(http.Tenant(slug == "alpha" ? "beta" : "alpha").Id.ToString("D"), html);
+                Assert.True(html.Contains(http.Tenant(slug).Id.ToString("D"), StringComparison.Ordinal));
+                Assert.False(html.Contains(http.Tenant(slug == "alpha" ? "beta" : "alpha").Id.ToString("D"), StringComparison.Ordinal));
             }
         }
         using (var missing = await browser.PostAsync("/alpha/account/logout", new Dictionary<string, string>())) Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);

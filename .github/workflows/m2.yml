@@ -1,7 +1,7 @@
-name: M2 identity PoC
+name: M2 identity acceptance
 on:
   push:
-    branches: [main, feat/m2-identity-poc]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
