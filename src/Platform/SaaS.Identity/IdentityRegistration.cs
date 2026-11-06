@@ -23,7 +23,10 @@ public static class IdentityRegistration
     public static void AddSaasIdentity(this IServiceCollection services, IdentityDeployment deployment, TimeProvider? clock = null)
     {
         services.AddSingleton(deployment);
-        services.TryAddSingleton(clock ?? TimeProvider.System);
+        // ASP.NET Core may already register TimeProvider.System. An explicitly supplied
+        // clock must govern authority reads as well as cookie lifetime validation.
+        if (clock is null) services.TryAddSingleton(TimeProvider.System);
+        else services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
         services.TryAddSingleton<TenancyConnections>();
         services.AddHttpContextAccessor();
         // Native Users resolves SiteService, whose document manager requires Orchard's
@@ -37,6 +40,7 @@ public static class IdentityRegistration
             tenant.AddScoped<DefaultIssuerStore>();
             tenant.AddScoped<RefreshRotation>();
             tenant.AddScoped<NativeTokenResponse>();
+            tenant.AddScoped<SignInManager<OrchardCore.Users.IUser>, NativeLockoutSignInManager>();
             tenant.AddSingleton<IOpenIdServerService, DeploymentOpenIdServerService>();
             tenant.Configure<OpenIddictCoreOptions>(options => options.DisableEntityCaching = true);
             tenant.PostConfigure<OpenIddictServerOptions>(options =>

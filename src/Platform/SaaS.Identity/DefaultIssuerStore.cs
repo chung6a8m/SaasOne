@@ -43,6 +43,23 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
         if (authorization is null || await manager.GetStatusAsync(authorization, cancellationToken) != OpenIddictConstants.Statuses.Valid
             || await manager.GetSubjectAsync(authorization, cancellationToken) != subject)
             throw new IdentityDeniedException(401, "grant_invalid");
+
+        // Each application family owns a distinct native authorization. Native access
+        // revocation must also invalidate its web session/refresh chain, including when
+        // web is the first request after the commit. Read the issuer, never a local cache.
+        // Normal access-token expiry is NOT web-session expiry: the latter has its own
+        // server-side idle/absolute/subscription limits. Code redemption can legitimately
+        // precede the first access entry, and redeemed refresh/code entries are not reuse.
+        var tokens = provider.GetRequiredService<IOpenIddictTokenManager>();
+        await foreach (var token in tokens.FindByAuthorizationIdAsync(authorizationId, cancellationToken))
+        {
+            if (await tokens.GetTypeAsync(token, cancellationToken) != OpenIddictConstants.TokenTypeIdentifiers.AccessToken) continue;
+            if (await tokens.GetStatusAsync(token, cancellationToken) != OpenIddictConstants.Statuses.Valid
+                || await tokens.GetSubjectAsync(token, cancellationToken) != subject
+                || await tokens.GetAuthorizationIdAsync(token, cancellationToken) != authorizationId
+                || await tokens.GetApplicationIdAsync(token, cancellationToken) != await manager.GetApplicationIdAsync(authorization, cancellationToken))
+                throw new IdentityDeniedException(401, "grant_invalid");
+        }
     }, cancellationToken);
 
     public Task ValidateAccessAsync(string tokenId, string authorizationId, string subject, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
@@ -58,7 +75,8 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
         var authorizations = provider.GetRequiredService<IOpenIddictAuthorizationManager>();
         var authorization = await authorizations.FindByIdAsync(authorizationId, cancellationToken);
         if (authorization is null || await authorizations.GetStatusAsync(authorization, cancellationToken) != OpenIddictConstants.Statuses.Valid
-            || await authorizations.GetSubjectAsync(authorization, cancellationToken) != subject)
+            || await authorizations.GetSubjectAsync(authorization, cancellationToken) != subject
+            || await tokens.GetApplicationIdAsync(token, cancellationToken) != await authorizations.GetApplicationIdAsync(authorization, cancellationToken))
             throw new IdentityDeniedException(401, "grant_invalid");
     }, cancellationToken);
 }
