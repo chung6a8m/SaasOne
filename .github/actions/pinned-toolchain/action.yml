@@ -1,0 +1,17 @@
+name: Pinned M0 toolchain
+description: Install the exact SDK and checksum-verified PowerShell baseline
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      with:
+        global-json-file: global.json
+    - shell: bash
+      run: |
+        set -euo pipefail
+        curl -fsSL https://github.com/PowerShell/PowerShell/releases/download/v7.6.9/powershell-7.6.9-linux-x64.tar.gz -o "$RUNNER_TEMP/pwsh.tar.gz"
+        echo "1da6d6d6035d651f20e70ddee7c4c15ac6ab8b9fb40ee92240d91263f28a884b  $RUNNER_TEMP/pwsh.tar.gz" | sha256sum -c -
+        mkdir -p "$RUNNER_TEMP/pwsh"
+        tar -xzf "$RUNNER_TEMP/pwsh.tar.gz" -C "$RUNNER_TEMP/pwsh"
+        chmod +x "$RUNNER_TEMP/pwsh/pwsh"
+        echo "$RUNNER_TEMP/pwsh" >> "$GITHUB_PATH"

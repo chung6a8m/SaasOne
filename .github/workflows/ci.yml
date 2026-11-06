@@ -1,0 +1,62 @@
+name: M0 foundation
+on:
+  push:
+    branches: [main, feat/m0-foundation]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m0-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  foundation:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Required M0 commands, scripts and evidence
+        shell: pwsh
+        run: ./scripts/check.ps1 -Scope M0
+      - name: Ensure checks did not rewrite tracked inputs
+        shell: bash
+        run: |
+          git diff --check
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: m0-foundation-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results/m0
+          if-no-files-found: error
+  sql-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Build pinned SQL probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet tool restore
+          dotnet restore SaasOne.slnx --locked-mode
+          dotnet build SaasOne.slnx --configuration Release --no-restore
+      - name: Dedicated SQL Server and wrong-target negative probe
+        shell: pwsh
+        run: ./scripts/sql-fixture.ps1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: m0-sql-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/verification
+          if-no-files-found: error
