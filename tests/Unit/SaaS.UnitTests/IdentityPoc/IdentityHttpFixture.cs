@@ -36,15 +36,20 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
     private readonly string _home = Path.Combine(Path.GetTempPath(), "saas-identity-" + Guid.NewGuid().ToString("N"));
     private readonly Dictionary<Guid, string> _secrets = [];
     private readonly List<(Guid Id, SaaS.Abstractions.Tenancy.SubscriptionStatus Status, DateTimeOffset Expiry)> _original = [];
+    private readonly bool _productHost;
     private WebApplication _application = null!;
     private X509Certificate2 _signing = null!;
     private X509Certificate2 _encryption = null!;
     public IShellHost Shells => _application.Services.GetRequiredService<IShellHost>();
 
-    private IdentityHttpFixture(M1SqlEnvironment environment) => Environment = environment;
-    public static async Task<IdentityHttpFixture> CreateAsync(M1SqlEnvironment environment)
+    private IdentityHttpFixture(M1SqlEnvironment environment, bool productHost)
     {
-        var fixture = new IdentityHttpFixture(environment);
+        Environment = environment;
+        _productHost = productHost;
+    }
+    public static async Task<IdentityHttpFixture> CreateAsync(M1SqlEnvironment environment, bool productHost = false)
+    {
+        var fixture = new IdentityHttpFixture(environment, productHost);
         try
         {
             Directory.CreateDirectory(fixture._home);
@@ -103,7 +108,11 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         });
         builder.Logging.ClearProviders();
         builder.WebHost.UseTestServer();
-        NativeServices.Add(builder.Services, new HttpPocShellSettings(Settings()));
+        // The product-host case starts against the existing M1 composition first:
+        // its closed HTTP boundary must fail the new identity integration contract.
+        if (_productHost)
+            NativeServices.Add(builder.Services, new RegistryShellSettings(new TenancyConnections()), runtimeRoutes: true);
+        else NativeServices.Add(builder.Services, new HttpPocShellSettings(Settings()));
         builder.Services.AddSaasIdentity(Deployment, Clock);
         builder.Services.AddOrchardCore().ConfigureServices(services => services.Configure<OpenIdConnectOptions>(IdentityNames.Oidc, options =>
         {
@@ -117,6 +126,7 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
             };
         }));
         _application = builder.Build();
+        if (_productHost) _application.Use(RuntimeBoundary.EnterAsync);
         _application.UseOrchardCore();
         _application.Run(context => { context.Response.StatusCode = 404; return Task.CompletedTask; });
         await _application.StartAsync();
