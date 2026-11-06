@@ -2,6 +2,11 @@ using SaaS.Tenancy.Data;
 using SaaS.Web.Maintenance;
 using SaaS.Web.Orchard;
 
+if (args.Length == 1 && args[0] == "--feature-graph")
+{
+    await NativeFeatureMetadata.WriteAsync();
+    return;
+}
 if (args.Length > 0 && args[0] == "--maintenance")
 {
     Environment.ExitCode = await MaintenanceCommand.RunAsync(args[1..]);
