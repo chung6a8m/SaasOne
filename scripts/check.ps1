@@ -17,8 +17,14 @@ function Invoke-Checked {
 }
 Push-Location $root
 try {
+    if ($Scope -eq 'SqlSmoke') {
+        // A blocked or failed attempt must not inherit a previous successful probe.
+        $sqlEvidence = Join-Path $root 'artifacts/verification/sql-smoke.json'
+        if (Test-Path $sqlEvidence) { Remove-Item $sqlEvidence -Force }
+    }
     if ($Scope -eq 'SqlSmoke' -and [string]::IsNullOrWhiteSpace($env:SAAS_SQL_SMOKE_CONNECTION)) {
         Write-Host 'BLOCKED: SAAS_SQL_SMOKE_CONNECTION is required; SQL smoke cannot be skipped.'
+        $report.status = 'BLOCKED'
         $code = 2
     } else {
         foreach ($tool in @('dotnet', 'git')) {
@@ -64,10 +70,11 @@ try {
     Write-Host ('FAIL: ' + $_.Exception.Message)
     $code = 1
 } finally {
-    if ($Scope -eq 'M0') {
+    if ($Scope -in @('M0', 'SqlSmoke')) {
         New-Item 'artifacts/verification' -ItemType Directory -Force | Out-Null
         $report.exitCode = $code
-        $report | ConvertTo-Json -Depth 12 | Set-Content 'artifacts/verification/m0.json' -Encoding utf8
+        $reportName = if ($Scope -eq 'M0') { 'm0.json' } else { 'sql-command.json' }
+        $report | ConvertTo-Json -Depth 12 | Set-Content (Join-Path 'artifacts/verification' $reportName) -Encoding utf8
     }
     Pop-Location
 }
