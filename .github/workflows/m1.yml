@@ -1,0 +1,46 @@
+name: M1 tenancy
+on:
+  push:
+    branches: [feat/m1-tenancy-provisioning]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m1-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verification:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Capture tracked source for isolated review
+        shell: bash
+        run: |
+          mkdir -p artifacts/source
+          git archive HEAD --output=artifacts/source/source.tar
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: m1-source-${{ github.sha }}
+          path: artifacts/source/source.tar
+          retention-days: 3
+          if-no-files-found: error
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Verify inherited M0 baseline
+        shell: pwsh
+        run: ./scripts/check.ps1 -Scope M0
+      - name: Verify real SQL baseline
+        shell: pwsh
+        run: ./scripts/sql-fixture.ps1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: m1-verification-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          if-no-files-found: error
