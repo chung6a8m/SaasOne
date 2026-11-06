@@ -5,34 +5,43 @@ on:
     paths: [.github/workflows/m2-workspace.yml]
 permissions:
   contents: read
+  actions: read
 jobs:
   inputs:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/pinned-toolchain
-      - name: Restore only public pinned dependencies
+      - name: Split already verified public build inputs into bounded artifacts
         shell: bash
-        run: dotnet restore SaasOne.slnx --locked-mode
-      - name: Export exact SDK and public dependency inputs, never credentials
-        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/inputs
-          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
-          (cd "$root"; tar -czf "$GITHUB_WORKSPACE/artifacts/inputs/dotnet.tar.gz" dotnet host/fxr/10.* sdk/10.0.403 shared/Microsoft.NETCore.App/10.* shared/Microsoft.AspNetCore.App/10.* packs/Microsoft.NETCore.App.Ref/10.* packs/Microsoft.AspNetCore.App.Ref/10.* packs/Microsoft.NETCore.App.Host.linux-x64/10.* packs/NETStandard.Library.Ref)
-          tar -czf artifacts/inputs/packages.tar.gz -C "$HOME/.nuget/packages" .
-          tar -czf artifacts/inputs/pwsh.tar.gz -C "$RUNNER_TEMP/pwsh" .
-          curl -fsSL https://github.com/OrchardCMS/OrchardCore/archive/refs/tags/v3.0.1.tar.gz -o artifacts/inputs/orchard-v3.0.1.tar.gz
-          git rev-parse HEAD > artifacts/inputs/commit.txt
-          (cd artifacts/inputs; sha256sum *.gz > SHA256SUMS)
+          mkdir -p parts
+          curl --max-time 300 -fsSL -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/chung6a8m/SaasOne/actions/artifacts/13521657234/zip -o inputs.zip
+          echo 'a3806a4caf4eeb860a64876b53dc2054a2b1bf5f197636cdbcdf195e9120e799  inputs.zip' | sha256sum --check
+          split -b 350M -d -a 2 inputs.zip parts/inputs.part
+          sha256sum parts/* > parts/SHA256SUMS
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: m2-offline-build-inputs
-          path: artifacts/inputs
+          name: m2-inputs-part00
+          path: |
+            parts/inputs.part00
+            parts/SHA256SUMS
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m2-inputs-part01
+          path: parts/inputs.part01
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m2-inputs-part02
+          path: parts/inputs.part02
           compression-level: 0
           retention-days: 1
           if-no-files-found: error

@@ -42,3 +42,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if (-not (Test-Path scripts/check-m2.ps1)) { throw 'BLOCKED: M2 PoC gate is not implemented yet.' }
           ./scripts/check-m2.ps1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m2-verification-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          if-no-files-found: error
