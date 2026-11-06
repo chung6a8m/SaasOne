@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Microsoft.Data.SqlClient;
 using SaaS.Abstractions.Tenancy;
 using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Operations;
@@ -23,8 +25,15 @@ public static class MaintenanceCommand
         catch (OperationCanceledException) { Console.Error.WriteLine("maintenance_cancelled"); return 1; }
         catch (Exception error)
         {
-            // Provider messages can contain sensitive configuration. Only the exception type is diagnostic output.
+            // No provider messages, SQL text, argument values or connection material are emitted.
             Console.Error.WriteLine("maintenance_failed:" + error.GetType().Name);
+            if (error is SqlException sql) Console.Error.WriteLine("sql_error_number:" + sql.Number);
+            foreach (var frame in new StackTrace(error, false).GetFrames().Take(12))
+            {
+                var method = frame.GetMethod();
+                if (method?.DeclaringType?.Namespace?.StartsWith("SaaS.", StringComparison.Ordinal) == true)
+                    Console.Error.WriteLine("source:" + method.DeclaringType.FullName + "." + method.Name);
+            }
             return 1;
         }
     }

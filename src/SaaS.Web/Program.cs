@@ -13,7 +13,7 @@ if (TenancyConnections.RuntimeConfigured)
 else builder.Services.AddOrchardCore();
 var app = builder.Build();
 app.Use(RuntimeBoundary.EnterAsync);
-if (TenancyConnections.RuntimeConfigured) await app.UseOrchardCoreAsync();
+if (TenancyConnections.RuntimeConfigured) app.UseOrchardCore();
 app.Run(context => { context.Response.StatusCode = StatusCodes.Status404NotFound; return Task.CompletedTask; });
 app.Run();
 public partial class Program { }
