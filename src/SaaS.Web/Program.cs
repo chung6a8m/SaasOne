@@ -1,10 +1,24 @@
-// M0 scaffolding. Selective Orchard CMS dependencies are pinned, not activated.
-// M1 supplies reviewed CMS registration, bootstrap and readiness before tenant middleware.
+using SaaS.Tenancy.Data;
+using SaaS.Web.Maintenance;
+using SaaS.Web.Orchard;
+
+if (args.Length == 1 && args[0] == "--feature-graph")
+{
+    await NativeFeatureMetadata.WriteAsync();
+    return;
+}
+if (args.Length > 0 && args[0] == "--maintenance")
+{
+    Environment.ExitCode = await MaintenanceCommand.RunAsync(args[1..]);
+    return;
+}
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddOrchardCore();
+if (TenancyConnections.RuntimeConfigured)
+    NativeServices.Add(builder.Services, new RegistryShellSettings(new TenancyConnections()), runtimeRoutes: true);
+else builder.Services.AddOrchardCore();
 var app = builder.Build();
-app.MapGet("/health/live", () => Results.Ok(new { status = "alive", milestone = "M0" }));
-// The default fallback excludes file-like paths; M0 must close those routes too.
-app.MapFallback("{**path}", () => Results.Problem(statusCode: 503, title: "Tenant runtime is not provisioned."));
+app.Use(RuntimeBoundary.EnterAsync);
+if (TenancyConnections.RuntimeConfigured) app.UseOrchardCore();
+app.Run(context => { context.Response.StatusCode = StatusCodes.Status404NotFound; return Task.CompletedTask; });
 app.Run();
 public partial class Program { }

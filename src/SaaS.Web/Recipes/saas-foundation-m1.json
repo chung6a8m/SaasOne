@@ -1,0 +1,12 @@
+{
+  "name": "SaaS.Foundation.M1.v1",
+  "version": 1,
+  "execution": "private-typed-orchard-adapter",
+  "plans": ["Standard", "Approval"],
+  "features": ["SaaS.Web", "SaaS.Theme.App"],
+  "implicitFeatures": ["OrchardCore.Modules.Application.DefaultFeatureId"],
+  "nativeMigration": { "type": "SaaS.Web.Orchard.FoundationMigration", "version": 1 },
+  "publicSetup": false,
+  "scripts": [],
+  "tenantEditable": false
+}

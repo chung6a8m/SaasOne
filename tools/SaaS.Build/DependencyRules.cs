@@ -52,6 +52,9 @@ public static class DependencyRules
         return errors.Order().ToArray();
     }
 
-    private static bool IsFamily(string id, string family) => id.Equals(family, StringComparison.OrdinalIgnoreCase)
-        || id.StartsWith(family + ".", StringComparison.OrdinalIgnoreCase);
+    private static bool IsFamily(string id, string family)
+    {
+        if (id.StartsWith("feature:", StringComparison.Ordinal)) id = id[8..];
+        return id.Equals(family, StringComparison.OrdinalIgnoreCase) || id.StartsWith(family + ".", StringComparison.OrdinalIgnoreCase);
+    }
 }

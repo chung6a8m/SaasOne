@@ -1,0 +1,54 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using SaaS.Abstractions.Tenancy;
+namespace SaaS.Tenancy.Data;
+
+public sealed class TenantDbContext(DbContextOptions<TenantDbContext> options) : DbContext(options)
+{
+    public DbSet<TenantDatabaseIdentity> Identity => Set<TenantDatabaseIdentity>();
+    public DbSet<TenantBaseline> Baseline => Set<TenantBaseline>();
+
+    protected override void OnModelCreating(ModelBuilder model)
+    {
+        model.HasDefaultSchema("tenancy");
+        var identity = model.Entity<TenantDatabaseIdentity>();
+        identity.ToTable("Identity", table =>
+        {
+            table.HasCheckConstraint("CK_TenantIdentity_Singleton", "[Id] = 1");
+            table.HasCheckConstraint("CK_TenantIdentity_Nonempty", "[TenantId] <> '00000000-0000-0000-0000-000000000000' AND [DatabaseNonce] <> '00000000-0000-0000-0000-000000000000'");
+            table.HasTrigger("ImmutableTenantDatabaseIdentity");
+            table.UseSqlOutputClause(false);
+        });
+        identity.HasKey(x => x.Id);
+        identity.Property(x => x.Id).ValueGeneratedNever();
+        identity.Property(x => x.TenantId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+        identity.Property(x => x.DatabaseNonce).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+        identity.Property(x => x.InitialOperationId).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+        identity.Property(x => x.CreatedAt).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
+
+        var baseline = model.Entity<TenantBaseline>();
+        baseline.ToTable("Baseline", table => table.HasCheckConstraint("CK_TenantBaseline_Singleton", "[Id] = 1"));
+        baseline.HasKey(x => x.Id);
+        baseline.Property(x => x.Id).ValueGeneratedNever();
+        baseline.Property(x => x.Recipe).HasMaxLength(128).IsUnicode(false);
+        baseline.Property(x => x.FeatureHash).HasMaxLength(64).IsUnicode(false);
+        baseline.Property(x => x.OrchardMigrationHash).HasMaxLength(64).IsUnicode(false);
+    }
+
+    private void GuardIdentity()
+    {
+        ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<TenantDatabaseIdentity>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new TenantContractException("tenant_identity_immutable");
+    }
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        GuardIdentity();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        GuardIdentity();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+}

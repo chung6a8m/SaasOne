@@ -10,11 +10,14 @@ public sealed class HostTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task Liveness_does_not_claim_readiness() => Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/health/live", TestContext.Current.CancellationToken)).StatusCode);
     [Theory]
     [InlineData("/health/ready")]
-    [InlineData("/Setup")]
-    [InlineData("/admin")]
-    [InlineData("/alpha/api/orders")]
     [InlineData("/unknown-tenant/")]
     [InlineData("/alpha/customer.html")]
     [InlineData("/alpha/assets/site.js")]
     public async Task Unprovisioned_routes_remain_closed(string path) => Assert.Equal(HttpStatusCode.ServiceUnavailable, (await _client.GetAsync(path, TestContext.Current.CancellationToken)).StatusCode);
+
+    [Theory]
+    [InlineData("/Setup")]
+    [InlineData("/admin")]
+    [InlineData("/alpha/api/orders")]
+    public async Task Management_and_unimplemented_api_routes_are_not_exposed(string path) => Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync(path, TestContext.Current.CancellationToken)).StatusCode);
 }

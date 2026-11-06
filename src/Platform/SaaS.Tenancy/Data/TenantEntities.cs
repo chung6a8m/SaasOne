@@ -1,0 +1,19 @@
+namespace SaaS.Tenancy.Data;
+
+public sealed class TenantDatabaseIdentity
+{
+    public int Id { get; set; }
+    public Guid TenantId { get; set; }
+    public Guid DatabaseNonce { get; set; }
+    public Guid InitialOperationId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class TenantBaseline
+{
+    public int Id { get; set; }
+    public int SeedVersion { get; set; }
+    public string Recipe { get; set; } = string.Empty;
+    public string FeatureHash { get; set; } = string.Empty;
+    public string OrchardMigrationHash { get; set; } = string.Empty;
+}

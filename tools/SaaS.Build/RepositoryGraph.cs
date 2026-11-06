@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace SaaS.Build;
@@ -63,11 +62,8 @@ public static class RepositoryGraph
                         edges[name].Add(referencedName);
                     }
         }
-        // Fail closed until M1 introduces and tests a feature-manifest graph adapter.
-        foreach (var manifest in Directory.GetFiles(Path.Combine(root, "src"), "Manifest.cs", SearchOption.AllDirectories)
-            .Where(p => !p.Replace('\\', '/').Contains("/obj/") && !p.Replace('\\', '/').Contains("/bin/")))
-            if (Regex.IsMatch(File.ReadAllText(manifest), @"\b(Dependencies|BaseTheme)\s*="))
-                throw new InvalidDataException("Feature dependency adapter required before accepting: " + Path.GetRelativePath(root, manifest));
-        return edges.OrderBy(p => p.Key).Select(p => new DependencyNode(p.Key, layers.GetValueOrDefault(p.Key, "Package"), p.Value.Order().ToArray())).ToArray();
+        var restored = edges.OrderBy(p => p.Key).Select(p => new DependencyNode(p.Key, layers.GetValueOrDefault(p.Key, "Package"), p.Value.Order().ToArray())).ToArray();
+        // Inspect compiled native metadata, including attribute constants and BaseTheme, rather than parsing C# with a regex.
+        return FeatureGraph.Combine(restored, FeatureGraph.ReadBuiltHost(root));
     }
 }

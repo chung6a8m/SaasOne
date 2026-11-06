@@ -1,13 +1,14 @@
 # SaasOne
 
-Reusable Orchard Core multi-tenant SaaS foundation. The reviewed [roadmap](docs/roadmap/saas-orchard-roadmap-v1.md) is the specification. This branch implements **M0 only**: solution, dependency boundaries, decision records, pinned toolchain, verification scripts and CI. It does not provision tenants, issue tokens, migrate production databases or implement Orders.
+Reusable Orchard Core multi-tenant SaaS foundation. The reviewed [roadmap](docs/roadmap/saas-orchard-roadmap-v1.md) is the specification. This branch implements the M0 foundation and **M1 tenancy/provisioning**: a fixed platform database, isolated customer databases, private maintenance commands, native Orchard prefix routing and fail-closed readiness.
 
-The host is deliberately closed: `/health/live` reports process liveness; all other routes return 503. It is not an Orchard tenant readiness endpoint. M1 must implement controlled bootstrap, explicit CMS registrations, tenant identity and readiness before enabling tenant middleware. Identity is [Conditional — pending M2 PoC](docs/adr/0001-identity-and-membership.md).
+Identity/SSO remains [Conditional — pending M2 PoC](docs/adr/0001-identity-and-membership.md). There are no customer business APIs, Orders/OrderApprovals implementation, public setup/provisioning endpoint or tenant CMS administration. No production deployment is implied.
 
 ## Fresh clone without Visual Studio
-Supported M0 environment: Ubuntu 22.04 x64 (including a matching WSL2 distribution), Git, .NET SDK **10.0.403**, PowerShell **7.6.9**. Use VS Code optionally. Install the SDK from [Microsoft's SDK downloads](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) and PowerShell from the [pinned release](https://github.com/PowerShell/PowerShell/releases/tag/v7.6.9). Exact SDK selection is mandatory (`rollForward: disable`). Other OS/architectures have not been certified by M0 evidence.
 
-Clone this repository with your normal GitHub authentication and enter its root. Never put an access token in a clone command or config file. Run in this order:
+The evidence-backed environment is Ubuntu 22.04 x64, Git, .NET SDK **10.0.403**, PowerShell **7.6.9**, and Docker for the SQL gates. VS Code is optional. Exact SDK selection is mandatory (`rollForward: disable`); other operating systems and architectures have not been certified by this evidence.
+
+Clone with your normal GitHub authentication, enter the repository root, and run:
 
 ```powershell
 dotnet --info
@@ -15,48 +16,67 @@ pwsh --version
 dotnet tool restore
 dotnet restore SaasOne.slnx --locked-mode
 dotnet build SaasOne.slnx --configuration Release --no-restore
-dotnet test SaasOne.slnx --configuration Release --no-build --logger trx --results-directory artifacts/test-results/m0
+dotnet test SaasOne.slnx --configuration Release --no-build --filter 'Category!=SqlM1' --logger trx --results-directory artifacts/test-results/m0
 pwsh -NoProfile -File ./scripts/check.ps1 -Scope M0
 ```
 
-`M0` repeats locked restore/build/tests, clears its own old TRX output, verifies both required test suites (no empty/skipped success), checks the restored dependency graph and scans tracked configuration/secret risks. `Prerequisites` is a fast tool/version check. Native non-zero exit codes fail the script. The emitted `artifacts/verification/m0.json` identifies the commit, environment, commands and real suite counts; it is not hand-maintained.
+The retained `M0` command is the mandatory foundation gate, including the new M1 non-SQL tests. It repeats locked restore/build/tests, rejects empty/skipped evidence, checks restored project/package **and native Orchard feature** dependencies, and scans tracked configuration for secrets. Native nonzero exit codes fail the gate. `artifacts/verification/m0.json` records the tested SHA, environment, commands and actual suite counts.
 
-## Real SQL Server smoke (separate mandatory gate)
-The expected non-production target is `saas_m0_smoke`, SQL Server 2022 Developer on Linux, build **16.0.4305.5**. An unavailable/mismatched target or missing secret is BLOCKED/FAIL, never skipped. Do not run the fixture on a production server. SQL Developer is for development/testing only.
+The `SqlM1` category is excluded only from this non-SQL command. It is mandatory in its own real SQL gate below. Running all tests without that filter requires the private fixture environment and fails when SQL is absent; SQL tests are never silently skipped.
 
-After the foundation checks, Docker users can run a disposable local fixture:
+## Mandatory real SQL gates
+
+After the foundation build, run both isolated fixtures:
 
 ```powershell
 pwsh -NoProfile -File ./scripts/sql-fixture.ps1
+pwsh -NoProfile -File ./scripts/m1-sql-fixture.ps1
 ```
 
-The fixture binds to loopback, creates a fresh uniquely named container, creates only the fixed test DB and a CONNECT-only test login, performs a wrong-target negative test, runs the exact SQL check below, and removes that container in finally. Credentials are generated per run and passed via environment/stdin, never written to files. It does not touch an existing SQL instance. Docker daemon access is required.
+Both require Docker, bind to loopback, create fresh containers from the pinned SQL Server 2022 Developer image/build **16.0.4305.5**, generate disposable credentials, and remove their containers before publishing success. They never target an existing deployment. SQL Developer is for development/testing only.
 
-For an operator-prepared matching instance, inject the connection as the environment variable `SAAS_SQL_SMOKE_CONNECTION` from your secret manager, then run the eighth roadmap command:
+The M0 fixture proves exact provider/engine/version/database/privilege connectivity, including a wrong-target negative probe. Its expected database is `saas_m0_smoke`. For an operator-prepared matching test instance, inject `SAAS_SQL_SMOKE_CONNECTION` from a secret manager and run `scripts/check.ps1 -Scope SqlSmoke`; never paste credentials into commands or Git.
+
+The M1 fixture covers private platform bootstrap, four real customer databases, actual Orchard routing, idempotent retry, concurrent/stale operation rejection, lifecycle preservation, immutable identity, missing/corrupt baseline rejection, forbidden cross-database/DDL access and fresh runtime-only process restarts. It requires at least 48 executed passing cases, validates named mandatory cases including six cold-process isolation combinations, and writes `artifacts/verification/m1-sql.json` plus TRX evidence. Separate HTTP/maintenance process tests distinguish preloaded-secret registration from late-secret delivery requiring restart. A missing SQL prerequisite, skipped test, failed assertion or cleanup failure cannot produce PASS.
+
+## Provisioning and runtime
+
+Read the [M1 runbook](docs/runbooks/m1-tenancy-provisioning.md) before injecting secrets or running maintenance. Bootstrap and provisioning use **separate private processes**, not HTTP. Runtime, operator, per-database migrator and server provisioner credentials have different privileges. The runtime process must receive only runtime secrets.
 
 ```powershell
-pwsh -NoProfile -File ./scripts/check.ps1 -Scope SqlSmoke
+# IDs and expiry below come from a persisted private deployment inventory.
+./scripts/tenant-provision.ps1 -Bootstrap -InstallationId $installationId
+./scripts/tenant-provision.ps1 -TenantId $tenantId -OperationId $operationId -Slug alpha -Plan Standard -ExpiresAt $expiresAt
 ```
 
-Do not paste a password into shell history. The expected database/version are fixed in `tools/SaaS.SqlSmoke`, not taken from arbitrary expected-value overrides. The SQL tool opens an EF Core SQL Server connection, checks real engine/edition/platform/database/version/privileges and executes a query. `artifacts/verification/sql-smoke.json` contains sanitized evidence only. This proves connectivity, **not** M1 isolation/DDL behavior or M6 backup/restore.
+Retry uses the same complete request tuple. The supported M1 coordinator uses one trusted operations machine, a durable local process lock, a non-expiring SQL session lock and prior-owner SQL-session reconciliation. Cross-host takeover and unidentified existing databases are blocked, not automatically adopted. Owner review of these constraints is required before deployment.
+
+`GET /health/live` proves process liveness only. After private provisioning, `GET /health/ready` checks the platform baseline, `GET /{slug}/health/ready` checks the selected customer's readiness, and `GET /{slug}/` serves a minimal tenant-prefixed foundation page. Setup, admin, feature, template, recipe and upload HTTP surfaces remain closed. Unknown/unready tenants never fall through to Default customer business data. A customer's invalid registration or runtime secret does not prevent valid tenants/Default from loading; platform failures still close all readiness.
+
+**Secret delivery is environment-only.** A newly completed tenant can be registered without restarting HTTP only when its runtime secret was injected BEFORE that HTTP process started. A secret added later to the maintenance/parent environment is not available in the running HTTP process: update its runtime-only deployment environment and perform a controlled restart/container recreation. M1 does not claim dynamic secret delivery or zero-downtime provisioning. See the runbook for the two supported sequences.
+
+`Standard` and `Approval` currently share the reviewed foundation profile. M1 records the selected plan but does not fake business modules scheduled for later milestones. TenantContext, customer connection, prefixed links and cache partition derive from the actual routed shell, not request-supplied tenant identifiers.
 
 ## Development and repository map
-`pwsh -NoProfile -File scripts/dev.ps1 -Action Setup` restores the locked baseline. `-Action Run` starts the closed host on loopback port 5080; `-Action Check` invokes M0.
+
+`pwsh -NoProfile -File scripts/dev.ps1 -Action Setup` restores the locked baseline. `-Action Run` starts the host on loopback port 5080; without runtime secrets its business/readiness surfaces stay closed. `-Action Check` runs the foundation gate.
 
 | Path | Responsibility |
 |---|---|
-| `src/SaaS.Web` | Product composition root and closed M0 host |
-| `src/Platform` | Abstractions, Tenancy, Identity, AccessControl, Auditing boundaries |
+| `src/SaaS.Web` | Composition root, private CLI, native Orchard adapter and HTTP readiness boundary |
+| `src/Platform/SaaS.Tenancy` | Registry, operation coordination, identity, owned EF contexts and migrations |
+| `src/Platform` | Abstractions, Identity, AccessControl and Auditing module boundaries |
 | `src/Themes/SaaS.Theme.App` | Platform-controlled shared theme boundary |
 | `tools/SaaS.Build`, `tools/SaaS.SqlSmoke` | Verification tooling, never runtime tenant services |
-| `tests/Unit`, `tests/Architecture` | Host, scripts, evidence, hygiene and dependency tests |
-| `docs/adr`, `docs/decisions` | Architectural decisions, owners and future proof gates |
+| `tests/Unit`, `tests/Architecture` | Behavioral, real SQL, native-feature, dependency and evidence tests |
+| `docs/verification`, `docs/runbooks` | Source-bound verification records and private operational procedures |
 
-Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility matrix](docs/compatibility/m0-matrix.md), [decision register](docs/decisions/m0-register.md) and [verification record](docs/verification/m0.md) before changes. Platform/theme may not depend directly or transitively on business modules; the host alone composes them. No product module is faked merely to make a test green.
+Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility matrix](docs/compatibility/m0-matrix.md), [M0 decision register](docs/decisions/m0-register.md), [M0 evidence](docs/verification/m0.md) and [M1 evidence](docs/verification/m1.md). Platform/theme must not depend directly or transitively on business modules, including mixed feature-to-package paths. Tenancy owns the `platform` and `tenancy` EF streams; Orchard owns its native tables/migration record. Runtime never applies EF migrations.
 
 ## CI and dependency maintenance
-`.github/workflows/ci.yml` uses read-only repository permissions and separate foundation/SQL jobs. Both gates are required for acceptance; SQL is not optional when credentials are missing. No production secrets are needed for the ephemeral SQL fixture. Evidence artifacts are scoped to the tested SHA and run.
 
-Normal builds do not rewrite locks. After a reviewed dependency change, run `pwsh -NoProfile -File scripts/update-locks.ps1`, inspect the NuGet lockfile and resolved-graph diff, update the matrix/selection rationale and rerun both gates. Do not bypass NuGet audit. Indirect prerelease sanitizer packages inherited from Orchard are recorded in the matrix; rich text and uploads remain disabled.
+The existing `.github/workflows/ci.yml` foundation/SQL jobs remain. `.github/workflows/m1.yml` adds the full M1 gate on the implementation branch, `main`, and pull requests. It uses read-only repository permissions, checks retained migration snapshots and PowerShell syntax, runs both SQL fixtures, and uploads SHA-scoped evidence and sanitized logs. No deployment secrets are needed.
 
-Owner review/adoption of the added implementation defaults is still required before merge or dependent implementation. It does not close M1–M6 runtime gates or the M2 identity PoC. No production deployment is implied.
+Normal builds do not rewrite locks. After a reviewed dependency change, run `scripts/update-locks.ps1`, inspect lock/resolved-graph changes, update the matrix/rationale and rerun every gate. Do not bypass NuGet audit. M1 retains the M0 package pins; dormant OpenID dependencies are explicitly unavailable and cannot enter the enabled M1 profile. Rich text, arbitrary scripts and uploads remain disabled.
+
+M1 owner review and merge are separate from implementation verification. M2–M6 acceptance gates remain open.

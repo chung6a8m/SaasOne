@@ -1,0 +1,59 @@
+name: M1 tenancy
+on:
+  push:
+    branches: [main, feat/m1-tenancy-provisioning]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m1-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verification:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Locked build, behavioral tests and architecture
+        shell: bash
+        run: |
+          mkdir -p artifacts/logs
+          pwsh -NoProfile -File scripts/check.ps1 -Scope M0 > artifacts/logs/foundation.log 2>&1 || { tail -100 artifacts/logs/foundation.log; exit 1; }
+          tail -25 artifacts/logs/foundation.log
+      - name: Validate retained migration snapshots and scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          foreach ($context in @('PlatformDbContext', 'TenantDbContext')) {
+              & dotnet ef migrations has-pending-model-changes --project src/Platform/SaaS.Tenancy --context $context --configuration Release --no-build
+              if ($LASTEXITCODE -ne 0) { throw "Snapshot/model mismatch: $context" }
+          }
+          foreach ($script in Get-ChildItem scripts -Filter *.ps1) {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+              if ($errors.Count -ne 0) { throw "PowerShell syntax errors: $($script.Name)" }
+          }
+      - name: Real SQL baseline
+        shell: pwsh
+        run: ./scripts/sql-fixture.ps1
+      - name: M1 real SQL and Orchard acceptance
+        shell: bash
+        run: |
+          pwsh -NoProfile -File scripts/m1-sql-fixture.ps1 > artifacts/logs/m1-sql.log 2>&1 || { tail -120 artifacts/logs/m1-sql.log; exit 1; }
+          tail -35 artifacts/logs/m1-sql.log
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m1-verification-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+            artifacts/logs
+          if-no-files-found: error
