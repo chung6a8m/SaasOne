@@ -10,8 +10,37 @@ $sa = 'Aa1!' + [Guid]::NewGuid().ToString('N')
 $runtimePassword = 'Bb2!' + [Guid]::NewGuid().ToString('N')
 $started = $false
 $code = 1
+$blocked = $false
+$verification = Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts/verification'
+$report = [ordered]@{
+    runId = [Guid]::NewGuid().ToString('N')
+    timestampUtc = [DateTimeOffset]::UtcNow
+    completedUtc = $null
+    sourceSha = $null
+    status = 'FAIL'
+    exitCode = 1
+    image = $image
+    digest = $null
+    wrongTargetExitCode = $null
+    sqlSmokeExitCode = $null
+    cleanupExitCode = $null
+    discovered = 2
+    executed = 0
+    passed = 0
+    failed = 0
+    skipped = 2
+}
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
+    # On every attempt, stale reports must be gone before Docker/git prerequisites are tested.
+    New-Item $verification -ItemType Directory -Force | Out-Null
+    foreach ($artifactName in @('sql-fixture.json', 'sql-smoke.json', 'sql-command.json')) {
+        $artifact = Join-Path $verification $artifactName
+        if (Test-Path $artifact) { Remove-Item $artifact -Force }
+    }
+    $sha = (& git rev-parse HEAD | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $sha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot record source identity.' }
+    $report.sourceSha = $sha
     if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) { throw 'BLOCKED: Docker is required for the disposable SQL fixture.' }
     if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::add-mask::$sa"; Write-Host "::add-mask::$runtimePassword" }
     $env:MSSQL_SA_PASSWORD = $sa
@@ -47,23 +76,73 @@ GO
     $env:SAAS_SQL_SMOKE_CONNECTION = $connection.Replace('Initial Catalog=saas_m0_smoke', 'Initial Catalog=master')
     & pwsh -NoProfile -File scripts/check.ps1 -Scope SqlSmoke
     $negativeCode = $LASTEXITCODE
+    $report.wrongTargetExitCode = $negativeCode
+    $report.executed++
     if ($negativeCode -eq 0) { throw 'Wrong SQL target was incorrectly accepted.' }
     $env:SAAS_SQL_SMOKE_CONNECTION = $connection
     & pwsh -NoProfile -File scripts/check.ps1 -Scope SqlSmoke
     $positiveCode = $LASTEXITCODE
+    $report.sqlSmokeExitCode = $positiveCode
+    $report.executed++
     if ($positiveCode -ne 0) { throw 'Real SQL smoke failed.' }
     $digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Cannot record SQL image identity.' }
-    $sha = (& git rev-parse HEAD | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot record source identity.' }
-    [ordered]@{ sourceSha = $sha; image = $image; digest = $digest; wrongTargetExitCode = $negativeCode; sqlSmokeExitCode = $positiveCode; discovered = 2; executed = 2; passed = 2; failed = 0; skipped = 0 } |
-        ConvertTo-Json | Set-Content artifacts/verification/sql-fixture.json -Encoding utf8
+    $report.digest = $digest
     $code = 0
-} catch { Write-Host ('FAIL: ' + $_.Exception.Message); $code = 1 }
+} catch {
+    $blocked = $_.Exception.Message -like 'BLOCKED:*'
+    Write-Host ('FAIL: ' + $_.Exception.Message)
+    $code = 1
+}
 finally {
     if ($started) {
-        & docker rm --force $name | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Host 'FAIL: disposable SQL container cleanup failed.'; $code = 1 }
+        try {
+            & docker rm --force $name | Out-Null
+            $report.cleanupExitCode = $LASTEXITCODE
+            if ($report.cleanupExitCode -ne 0) {
+                Write-Host 'FAIL: disposable SQL container cleanup failed.'
+                $code = 1
+                $blocked = $false
+            }
+        } catch {
+            Write-Host 'FAIL: disposable SQL container cleanup raised an error.'
+            $report.cleanupExitCode = 1
+            $code = 1
+            $blocked = $false
+        }
+    }
+
+    if ($code -ne 0) {
+        # Even a late failure (including docker rm) cannot publish positive probe evidence.
+        try {
+            foreach ($artifactName in @('sql-smoke.json', 'sql-command.json')) {
+                $artifact = Join-Path $verification $artifactName
+                if (Test-Path $artifact) { Remove-Item $artifact -Force }
+            }
+        } catch {
+            Write-Host 'FAIL: could not invalidate incomplete SQL probe evidence.'
+            $blocked = $false
+        }
+    }
+    $report.skipped = $report.discovered - $report.executed
+    if ($code -eq 0) { $report.passed = $report.executed }
+    else { $report.failed = $report.executed }
+    $report.status = if ($code -eq 0) { 'PASS' } elseif ($blocked) { 'BLOCKED' } else { 'FAIL' }
+    $report.exitCode = $code
+    $report.completedUtc = [DateTimeOffset]::UtcNow
+
+    # Publish only after cleanup. A temporary file avoids a partial successful JSON report.
+    $temporary = Join-Path $verification ('sql-fixture-' + $report.runId + '.tmp')
+    try {
+        $report | ConvertTo-Json -Depth 6 | Set-Content $temporary -Encoding utf8
+        Move-Item $temporary (Join-Path $verification 'sql-fixture.json') -Force
+    } catch {
+        Write-Host 'FAIL: cannot persist final SQL fixture evidence.'
+        $code = 1
+        if (Test-Path $temporary) { Remove-Item $temporary -Force -ErrorAction SilentlyContinue }
+        foreach ($artifactName in @('sql-smoke.json', 'sql-command.json')) {
+            Remove-Item (Join-Path $verification $artifactName) -Force -ErrorAction SilentlyContinue
+        }
     }
     $env:MSSQL_SA_PASSWORD = $oldSa
     $env:SAAS_SQL_SMOKE_CONNECTION = $oldConnection
