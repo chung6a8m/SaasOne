@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using OrchardCore.Environment.Shell;
 using SaaS.Abstractions.Tenancy;
 using SaaS.Tenancy.Data;
+using SaaS.Tenancy.Domain;
 using SaaS.Tenancy.Operations;
 namespace SaaS.Web.Orchard;
 
@@ -11,22 +12,65 @@ public sealed class RegistryShellSettings(TenancyConnections connections) : IShe
     public async Task<IEnumerable<ShellSettings>> LoadSettingsAsync()
     {
         await using var database = TenancyConnections.PlatformContext(connections.Platform("runtime"));
-        var bootstrap = await database.Bootstrap.AsNoTracking().SingleAsync();
-        if (!bootstrap.Completed || bootstrap.InstallationId == Guid.Empty || bootstrap.BaselineVersion != 1)
-            throw new TenantContractException("platform_not_ready");
-        var settings = new List<ShellSettings> { NativeServices.Settings("Default", string.Empty, bootstrap.InstallationId, connections.Platform("runtime")) };
+        var bootstrap = await RequirePlatformAsync(database);
+        var settings = new List<ShellSettings> { DefaultSettings(bootstrap) };
+        // Platform reads stay outside the per-customer boundary: their failure must close all shells.
         foreach (var registration in await database.Tenants.AsNoTracking().ToArrayAsync())
         {
-            TenantDatabaseVerifier.ValidateRegistration(registration);
-            // Lifecycle readiness remains authoritative per request; provisioning rows are never routed.
-            if (registration.Operation != OperationStatus.None) continue;
-            settings.Add(NativeServices.Settings(registration.Slug, registration.Slug, registration.Id, connections.Customer(registration.Id, "runtime")));
+            try
+            {
+                if (CanLoad(registration)) settings.Add(CustomerSettings(registration));
+            }
+            catch (TenantContractException)
+            {
+                // Quarantine only this customer's invalid registration/secret. Request readiness still
+                // validates it and returns 503; never substitute Default or another customer's settings.
+            }
         }
         return settings;
     }
-    public async Task<IEnumerable<string>> LoadSettingsNamesAsync() => (await LoadSettingsAsync()).Select(settings => settings.Name).ToArray();
-    public async Task<ShellSettings> LoadSettingsAsync(string tenant) => (await LoadSettingsAsync()).SingleOrDefault(settings => settings.Name == tenant)
-        ?? throw new TenantContractException("unknown_shell");
+
+    public async Task<IEnumerable<string>> LoadSettingsNamesAsync()
+    {
+        await using var database = TenancyConnections.PlatformContext(connections.Platform("runtime"));
+        _ = await RequirePlatformAsync(database);
+        var names = new List<string> { "Default" };
+        foreach (var registration in await database.Tenants.AsNoTracking().ToArrayAsync())
+        {
+            try { if (CanLoad(registration)) names.Add(registration.Slug); }
+            catch (TenantContractException) { /* Invalid customer metadata is tenant-local. */ }
+        }
+        // Names are metadata, not a request to resolve every customer's deployment credential.
+        return names;
+    }
+
+    public async Task<ShellSettings> LoadSettingsAsync(string tenant)
+    {
+        await using var database = TenancyConnections.PlatformContext(connections.Platform("runtime"));
+        var bootstrap = await RequirePlatformAsync(database);
+        if (tenant == "Default") return DefaultSettings(bootstrap);
+        var registration = await database.Tenants.AsNoTracking().SingleOrDefaultAsync(item => item.Slug == tenant);
+        if (registration is null || !CanLoad(registration)) throw new TenantContractException("unknown_shell");
+        // Reloading Beta must never read or validate Alpha's secret. Errors for the requested tenant propagate.
+        return CustomerSettings(registration);
+    }
+
+    private ShellSettings DefaultSettings(PlatformBootstrap bootstrap) => NativeServices.Settings("Default", string.Empty, bootstrap.InstallationId, connections.Platform("runtime"));
+    private ShellSettings CustomerSettings(TenantRegistration registration) => NativeServices.Settings(registration.Slug, registration.Slug, registration.Id, connections.Customer(registration.Id, "runtime"));
+    private static bool CanLoad(TenantRegistration registration)
+    {
+        if (!TenantPolicy.IsOperational(registration.Status(), DateTimeOffset.UtcNow)) return false;
+        TenantDatabaseVerifier.ValidateRegistration(registration);
+        return true;
+    }
+    private static async Task<PlatformBootstrap> RequirePlatformAsync(PlatformDbContext database)
+    {
+        var bootstrap = await database.Bootstrap.AsNoTracking().SingleAsync();
+        if (!bootstrap.Completed || bootstrap.InstallationId == Guid.Empty || bootstrap.BaselineVersion != 1)
+            throw new TenantContractException("platform_not_ready");
+        return bootstrap;
+    }
+
     public Task SaveSettingsAsync(ShellSettings settings) => throw new TenantContractException("private_command_required");
     public Task RemoveSettingsAsync(ShellSettings settings) => throw new TenantContractException("private_command_required");
 }
