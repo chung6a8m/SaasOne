@@ -1,10 +1,10 @@
 # SaaS Orchard Core — Roadmap triển khai V1
 
 Ngày: 2026-11-06
-Revision: 1.1 — xử lý findings R01–R08 theo yêu cầu chủ dự án.
+Revision: 1.2 — xử lý tiếp findings vòng 2 R2-01–R2-03 theo yêu cầu chủ dự án; giữ các ràng buộc R01–R08.
 Trạng thái: Đã bổ sung hợp đồng thiết kế và cổng nghiệm thu; chưa triển khai hoặc nghiệm thu M0. Các kiểm chứng runtime vẫn chưa thực hiện.
 
-[Review baseline](../reviews/2026-11-06-roadmap-v1-review.md) · [Đối chiếu xử lý findings](../reviews/2026-11-06-roadmap-v1-remediation.md). Review baseline giữ nguyên và tham chiếu commit cũ; bản roadmap này là nguồn yêu cầu hiện hành.
+[Review baseline vòng 1](../reviews/2026-11-06-roadmap-v1-review.md) · [Xử lý vòng 1](../reviews/2026-11-06-roadmap-v1-remediation.md) · [Xử lý vòng 2](../reviews/2026-11-06-roadmap-v1-round2-remediation.md). Các báo cáo vòng trước giữ nguyên và tham chiếu baseline tương ứng; bản roadmap này là nguồn yêu cầu hiện hành.
 
 **Mục tiêu:** Tạo code base modular monolith có thể tái sử dụng cho nhiều sản phẩm, chứng minh bằng Orders và OrderApprovals trên tối thiểu bốn tenant.
 
@@ -12,7 +12,7 @@ Trạng thái: Đã bổ sung hợp đồng thiết kế và cổng nghiệm thu
 
 **Tech stack đã chốt:** .NET 10, Orchard Core CMS, YesSql, EF Core 10, SQL Server trước; VS Code, dotnet CLI, PowerShell, Git và Codex có subagent.
 
-**Căn cứ phạm vi:** Giữ các yêu cầu sản phẩm đã xác nhận. Yêu cầu “fix findings và commit” cho phép áp dụng các điều chỉnh R01–R08 vào roadmap; không đồng nghĩa phê duyệt mọi chi tiết implementation, hoàn thành ADR hay đạt kiểm thử. Các mặc định ở mục 2 vẫn là ứng viên cho ADR M0, trừ ràng buộc xử lý findings được ghi rõ bên dưới. Không thay đổi thứ tự M0–M7 hoặc tự mở rộng phạm vi production.
+**Căn cứ phạm vi:** Giữ các yêu cầu sản phẩm đã xác nhận. Yêu cầu “fix findings và commit” cho phép áp dụng các điều chỉnh R01–R08 và R2-01–R2-03 vào roadmap; không đồng nghĩa phê duyệt mọi chi tiết implementation, hoàn thành ADR hay đạt kiểm thử. Các mặc định ở mục 2 vẫn là ứng viên cho ADR M0, trừ ràng buộc xử lý findings được ghi rõ bên dưới. Không thay đổi thứ tự M0–M7 hoặc tự mở rộng phạm vi production. Revision 1.2 chọn xác lập lại quyền sau restore, giữ nghĩa vụ duyệt của đơn cũ và tách replay khỏi thực thi mới; đây là các lựa chọn thiết kế để xử lý findings, không gán thành yêu cầu người dùng đã chốt trước review.
 
 ## 1. Phạm vi đã xác nhận
 
@@ -63,7 +63,7 @@ Các mặc định này là lựa chọn thu hẹp phạm vi, không phải gi�
 
 Tài khoản gốc có thể xuất hiện trong nhiều tenant nhưng chỉ có một danh tính đăng nhập. Khi tích hợp Orchard Users tại tenant cần local user liên kết, ánh xạ bằng issuer + subject vào GlobalUserId ổn định; không liên kết tài khoản chỉ vì trùng email. Không đồng bộ mật khẩu qua các database.
 
-Tư cách thành viên là dữ liệu nền tảng. Role, role permission, user-role và user permission override của khách hàng nằm trong database của tenant. Việc xóa membership làm mất quyền truy cập ngay cả khi local profile hoặc role assignment chưa được dọn.
+Tư cách thành viên là dữ liệu nền tảng. Role, role permission, user-role và user permission override của khách hàng nằm trong database của tenant. Việc xóa membership làm mất quyền truy cập ngay cả khi local profile hoặc role assignment chưa được dọn. Sau restore tenant, role/override và audit trong bản restore không được coi là quyền hiện hành; áp dụng cổng xác lập lại quyền ở mục 5.3 trước khi mở nghiệp vụ.
 
 Truy cập platform data đi qua dịch vụ chuyên trách với kết nối cố định của platform. DbContext nghiệp vụ chỉ dùng kết nối của shell đã được Orchard định tuyến. Không chọn database từ tenantId trong body, header hoặc token.
 
@@ -117,7 +117,7 @@ Allow = TenantOperational
      AND ResourceRuleSatisfied
 ```
 
-`TenantOperational` kiểm tra trạng thái và ExpiresAt ở server. Mọi điều kiện bắt buộc đều phải đạt; quyền thuộc role chỉ là một phần quyết định.
+`TenantOperational` kiểm tra trạng thái và ExpiresAt ở server. Mọi điều kiện bắt buộc đều phải đạt; quyền thuộc role chỉ là một phần quyết định. `ResourceRuleSatisfied` là policy bảo mật trên tài nguyên; không đồng nhất với precondition chuyển trạng thái/revision của command mới. Replay dùng policy riêng theo mục 6.3, không bỏ kiểm tra quyền hiện hành.
 
 - Một người có thể là Manager ở Alpha, Sales ở Beta và không là thành viên Gamma.
 - User deny hoặc role deny thắng allow từ role khác.
@@ -158,6 +158,7 @@ Request đã qua authorization trước mốc thu hồi có thể hoàn tất th
 | Gỡ membership | Chặn mọi grant/session của user tại tenant đó; thêm lại membership tạo generation mới, không hồi sinh grant cũ. |
 | Suspend, hết hạn hoặc xóa tenant | Chặn nghiệp vụ và refresh của tenant; mở lại/gia hạn yêu cầu grant/session hợp lệ thuộc thế hệ mới, không khôi phục quyền của token cũ. |
 | Đổi role hoặc Deny | Quyền mới áp dụng ở lần authorization tiếp theo; claim role cũ không là nguồn quyết định. |
+| Restore tenant | Chặn nghiệp vụ, chặn cấp/refresh grant của tenant, tăng security generation tại platform; token cũ bị vô hiệu và đăng nhập mới không được dùng quyền đã restore. Chỉ mở lại sau xác lập quyền theo mục 5.3. |
 | Logout tenant | Thu hồi grant/session của user hiện tại ở tenant được chọn; không logout các tenant khác. |
 | Logout toàn cục hoặc khóa account | Thu hồi toàn bộ grant/session của user trên các tenant; kiểm tra account phía server, không chỉ xóa cookie issuer. |
 | Lỗi platform, issuer store hoặc nguồn quyền tenant bắt buộc | Fail closed: không đọc/ghi nghiệp vụ và không cấp/refresh token bằng cache Allow; trả lỗi dependency unavailable có correlation id, không giả thành thiếu quyền. |
@@ -168,7 +169,7 @@ API nghiệp vụ phân biệt 401 (credential/grant không hợp lệ), 403 (đ
 
 Refresh được serialize theo grant family và chỉ tiêu thụ mỗi token một lần. V1 chọn rotation nghiêm ngặt, không có cửa sổ chấp nhận lại token cũ: reuse thu hồi family và session liên quan tại tenant đó, không thu hồi family độc lập hoặc tenant khác. Hai refresh đồng thời có thể có một response thành công trước khi reuse thu hồi family; không được còn hai chuỗi token có hiệu lực. Client chỉ chạy một refresh tại một thời điểm. Response refresh bị mất không được xử lý bằng replay vô hạn: dùng token cũ có thể khiến family bị thu hồi và phải đăng nhập lại. M2 phải chứng minh cấu hình thực tế đáp ứng hợp đồng này, không mặc định framework đã bật đúng. [3]
 
-Nghiệm thu M2/M3: kiểm tra trước/sau commit thu hồi ở cả UI/API, request đang chạy theo giới hạn trên, role/Deny mới, lỗi từng nguồn quyền, logout hai phạm vi, refresh đồng thời/reuse/mất response, remove/re-add, suspend/unsuspend, hết hạn/gia hạn và restart; Alpha còn hoạt động khi chỉ Beta bị khóa. Restore không được bỏ qua đối soát quyền tại M6.
+Nghiệm thu M2/M3: kiểm tra trước/sau commit thu hồi ở cả UI/API, request đang chạy theo giới hạn trên, role/Deny mới, lỗi từng nguồn quyền, logout hai phạm vi, refresh đồng thời/reuse/mất response, remove/re-add, suspend/unsuspend, hết hạn/gia hạn và restart; Alpha còn hoạt động khi chỉ Beta bị khóa. Restore phải qua cổng xác lập lại quyền ở mục 5.3; M6 kiểm tra cả credential cũ và đăng nhập mới, không coi đổi generation là đủ.
 
 ## 5. Vòng đời tenant và gói tính năng
 
@@ -189,7 +190,7 @@ Purge không xóa tài khoản gốc vẫn thuộc tenant khác. Chính sách l�
 
 Chọn hai gói thử nghiệm: Standard = Orders; Approval = Orders + OrderApprovals. Feature Profile là rào giới hạn feature, không thay thế kiểm tra membership/quyền API. [5]
 
-Không cho hạ gói Approval xuống Standard khi còn đơn PendingApproval; phải xử lý các đơn chờ trước. Không để thao tác tắt feature trở thành cách bỏ qua quy trình duyệt.
+Không cho hạ gói Approval xuống Standard khi còn nghĩa vụ duyệt chưa hoàn tất: PendingApproval, Rejected hoặc Draft làm lại có `ApprovalRequired = true` theo mục 6.2; phải xử lý các đơn này trước. Không để thao tác tắt feature trở thành cách bỏ qua quy trình duyệt.
 
 <a id="r04-bootstrap-readiness"></a>
 ### 5.1. Bootstrap, quyền vận hành và schema readiness — R04
@@ -212,14 +213,29 @@ Nghiệm thu M1: anonymous không gọi được setup/provision; retry và ch�
 M0 khóa protocol dưới đây; M3 hiện thực và kiểm thử hạ tầng, M5 chứng minh bằng Submit/Approve thật. Chỉ một operation đổi gói theo TenantId/version được sở hữu tại một thời điểm; operation id, gói cũ/mới, version và checkpoint lưu bền vững ở platform. Đây là workflow nhiều bước, không dùng distributed transaction.
 
 1. Chuyển registry từ trạng thái cho phép sang `PlanChanging` bằng kiểm tra version; chặn nghiệp vụ mới. DB tenant phải có durable write gate đã tạo bởi migration M3 (owner Tenancy, không để Orders/Approvals tự sở hữu). Mỗi lệnh ghi nghiệp vụ phải kiểm tra gate/version trong chính transaction của nó và giữ khóa tương thích đến commit/rollback. Không đủ nếu chỉ kiểm tra middleware trước transaction.
-2. Operation đóng write gate bằng khóa xung đột với các transaction nghiệp vụ đang giữ gate; đợi chúng kết thúc; timeout giữ registry đóng, không báo write gate đã đóng khi transaction đóng gate chưa commit. Chỉ sau khi đóng gate bền vững mới kiểm tra lại PendingApproval và các điều kiện hạ gói. Request đã authorization trước bước 1 nhưng chưa ghi không được vượt gate hoặc dùng version cũ.
-3. Nếu còn PendingApproval, từ chối hạ gói; không đổi feature/entitlement. Chỉ mở lại gói cũ sau khi đối soát trạng thái cũ và version. Nhờ vậy người dùng có thể xử lý đơn chờ rồi thử lại; không giữ khóa nghiệp vụ vô hạn để chờ duyệt.
+2. Operation đóng write gate bằng khóa xung đột với các transaction nghiệp vụ đang giữ gate; đợi chúng kết thúc; timeout giữ registry đóng, không báo write gate đã đóng khi transaction đóng gate chưa commit. Chỉ sau khi đóng gate bền vững mới kiểm tra lại mọi nghĩa vụ duyệt chưa hoàn tất theo mục 6.2 và các điều kiện hạ gói. Request đã authorization trước bước 1 nhưng chưa ghi không được vượt gate hoặc dùng version cũ.
+3. Nếu còn nghĩa vụ duyệt chưa hoàn tất (kể cả Rejected/Draft làm lại), từ chối hạ gói; không đổi feature/entitlement. Chỉ mở lại gói cũ sau khi đối soát trạng thái cũ và version. Nhờ vậy người dùng có thể xử lý đơn chờ rồi thử lại; không giữ khóa nghiệp vụ vô hạn để chờ duyệt.
 4. Nếu hợp lệ, giữ gate đóng trong khi migrate schema cần thiết, cập nhật feature/profile và entitlement theo checkpoint. Sau mỗi bước ghi trạng thái để resume đối soát thực tế, không lặp mù. Lỗi/crash giữa platform và tenant giữ `PlanChanging` hoặc trạng thái lỗi có thể khôi phục; không tự mở trong `finally`.
 5. Đối soát gói/feature/schema và target version; chuẩn bị mở gate tenant ở version mới khi platform vẫn đóng; chuyển registry sang trạng thái phục vụ cuối cùng. Request cũ không khớp version phải bị từ chối. Chỉ mở lại khi cả hai phía thống nhất; recovery dùng lại operation id, tăng fencing version khi đổi worker sở hữu và kiểm tra quyền sở hữu tại mọi bước, không cho worker cũ ghi đè operation mới. Task plan phải bảo đảm độc quyền cho cả bước đổi feature không có API conditional-write.
 
 Primitive SQL/lock timeout và đường recovery được khóa trong task plan M3. Bất biến bắt buộc: không có command commit thay đổi liên quan ở giữa lần kiểm tra cuối và lúc đổi gói; mất process/connection không được làm durable gate tự mở. Mọi đường tắt feature (CLI, API, Orchard Admin/recipe) phải đi qua protocol hoặc bị cấm; PlatformOperator không dùng direct toggle để bỏ guard. Tắt feature không xóa bảng/lịch sử.
 
-Nghiệm thu: đua downgrade với Submit/Approve; request đã qua authorization nhưng đang đợi ghi; timeout và crash ở từng checkpoint; restart/retry; worker cũ; toggle trực tiếp. Kết quả không có PendingApproval bị kẹt sau khi tắt Approvals, không mở entitlement trước schema, không mất lịch sử. M3 dùng fixture kiểm chứng protocol; M5 thay bằng nghiệp vụ thật.
+Nghiệm thu: đua downgrade với Submit/Approve; request đã qua authorization nhưng đang đợi ghi; timeout và crash ở từng checkpoint; restart/retry; worker cũ; toggle trực tiếp. Kết quả không có nghĩa vụ duyệt chưa hoàn tất bị kẹt hoặc biến thành Confirmed trực tiếp sau khi tắt Approvals, không mở entitlement trước schema, không mất lịch sử. M3 dùng fixture kiểm chứng protocol; M5 thay bằng nghiệp vụ thật.
+
+<a id="r2-01-restore-security"></a>
+### 5.3. Xác lập lại quyền sau restore tenant — R2-01
+
+Khôi phục SQL về một mốc cũ chỉ khôi phục các thay đổi tới mốc đó. [13] Theo ranh giới mục 3.2 và 6, quyền cùng audit quyền trong DB tenant có thể cùng bị đưa về quá khứ; không thể dùng riêng chúng để suy ra các lần thu hồi sau backup. V1 chọn **đóng tenant và xác lập lại toàn bộ phân quyền**, không xây thêm bản sao quyền đồng bộ ngoài tenant chỉ để tự động đối soát. Tăng generation chỉ vô hiệu credential cũ, không chứng minh quyền dùng cho lần đăng nhập mới là đúng.
+
+1. Trước restore, operation có authorization và lock độc quyền theo TenantId phải ghi trạng thái `Restoring`/`SecurityRevalidationRequired`, operation id và security generation mới ở platform. Chặn UI/API nghiệp vụ, cấp/refresh grant và session tenant; drain công việc đang chạy trước khi thay DB. Không tin write gate hoặc trạng thái Active trong DB vừa restore. Chỉ đường recovery được bảo vệ riêng được hoạt động.
+2. Platform DB, registry, membership, generation, quyền recovery và audit operation phải nằm ngoài phạm vi restore tenant này. Nếu platform cũng bị phục hồi/lùi dữ liệu hoặc không xác minh được nguồn hiện hành, giữ đóng và chuyển sang quy trình phục hồi nền tảng được review riêng; không coi runbook restore một tenant đủ cho trường hợp đó.
+3. Toàn bộ role definition/permission, user-role và user override (cả Allow/Deny) đã restore là dữ liệu lịch sử chưa đáng tin cho authorization. Không chỉ xóa một vài Allow hoặc bắt login lại. Người có quyền phê duyệt recovery hiện hành, được đăng ký tại platform trước diễn tập, phải xác lập một bộ quyền mới đầy đủ theo quyết định hiện tại; thiếu quyết định thì tiếp tục từ chối. Không lấy quyền phê duyệt từ ACL đã restore, không tự phong recovery authority, không tự gán lại role mặc định từ local profile. Quyền recovery không tự cấp quyền đọc Orders cho PlatformOperator.
+4. Áp dụng bộ quyền mới bằng transaction tenant cùng audit và dấu xác nhận generation/operation; không merge âm thầm quyền cũ vào bộ mới. Giữ lịch sử được phục hồi nhưng không dùng nó làm nguồn cấp quyền. Audit/checkpoint platform ghi actor, người phê duyệt, căn cứ quyết định, định danh/hash bộ quyền và generation; đây là quyết định hiện hành có chủ thể chịu trách nhiệm, không phải tuyên bố đã tự tái tạo được mọi thay đổi sau backup.
+5. Chỉ mở registry cuối cùng sau khi kiểm tra bộ quyền đã áp dụng, generation/checkpoint hai phía, membership hiện hành, gói/feature/schema/readiness và negative tests quyền. Mất nguồn, thiếu audit, lỗi hoặc crash giữ đóng; resume phải kiểm tra operation ownership/version, không mở gate trong `finally`. Chỉ grant/session mới thuộc generation hiện hành được dùng sau khi mở; tenant khác không bị thu hồi theo.
+
+M0 khóa ADR nguồn tin cậy, quyền phê duyệt recovery và hợp đồng trên. M3 hiện thực cổng/quyền/apply contract bằng fixture; M6 ghép restore SQL thật và runbook có checkpoint. Không kéo thao tác restore SQL về M0 hoặc coi fixture M3 là diễn tập restore. Muốn tự giữ lại quyền hiện hành sau restore thay cho xác lập lại cần ADR riêng chứng minh nguồn ngoài restore đầy đủ và nhất quán.
+
+Nghiệm thu bắt buộc: backup khi user có quyền → thu hồi quyền nhưng membership vẫn Active → restore → thử credential cũ và đăng nhập mới → quyền đã thu hồi không tự trở lại. Chạy riêng cho user-role, role permission và user override/Deny; bộ quyền mới giữ quyết định thu hồi. Có ca người chỉ có quyền recovery trong ACL cũ không được phê duyệt, thiếu bộ quyền/nguồn platform giữ đóng, lỗi/crash từng checkpoint và tenant khác vẫn hoạt động.
 
 ## 6. Audit và transaction
 
@@ -243,18 +259,45 @@ M4 khóa state machine và extension contract trước khi phân việc Orders/A
 | Trạng thái/thao tác | Kết quả và ràng buộc |
 |---|---|
 | Tạo/sửa Draft | Chỉ người có resource permission; mỗi sửa đổi cập nhật revision/concurrency token. |
-| Submit Draft, gói Standard | Chuyển Confirmed theo policy; không sinh approval giả. |
-| Submit Draft, gói Approval | Chuyển PendingApproval và tạo yêu cầu duyệt gắn đúng revision, cùng transaction. Nếu handler/schema Approvals chưa sẵn sàng thì từ chối, không fallback thành Standard. |
+| Submit Draft, gói Standard | Chỉ chuyển Confirmed theo policy khi `ApprovalRequired = false`; không sinh approval giả. Còn nghĩa vụ duyệt mà gói/handler không hỗ trợ thì từ chối theo mục 6.2. |
+| Submit Draft, gói Approval | Ghi `ApprovalRequired = true`, chuyển PendingApproval và tạo yêu cầu duyệt gắn đúng revision, cùng transaction. Nếu handler/schema Approvals chưa sẵn sàng thì từ chối, không fallback thành Standard. |
 | PendingApproval | Không sửa nội dung đơn; Approve/Reject phải khớp revision và concurrency token. Người tạo không được tự duyệt. |
 | Approve/Reject | Approve chuyển Confirmed; Reject chuyển Rejected và bắt buộc lý do. Chỉ một quyết định có hiệu lực cho mỗi request/revision. |
-| Sửa đơn Rejected/gửi lại | Đưa về Draft với revision mới, giữ lịch sử quyết định/revision cũ; Submit lại tạo yêu cầu duyệt mới. |
+| Sửa đơn Rejected/gửi lại | Đưa về Draft với revision mới, giữ `ApprovalRequired = true` và lịch sử quyết định/revision cũ; Submit lại phải tạo yêu cầu duyệt mới, không xác nhận trực tiếp do đổi gói. |
 | Confirmed | Không sửa/gửi lại trong V1; hủy hoặc sửa sau xác nhận là phạm vi bổ sung cần review. |
 
 Các hành vi trên là lựa chọn xử lý R06 trong revision này, không phải default Orchard. M4 có thể chứng minh extension bằng fixture; không mở luồng Approval thật trước M5. Orders chỉ phụ thuộc contract của extension, không tham chiếu implementation OrderApprovals.
 
-Idempotency cho command được phân vùng theo TenantId + actor/client + operation + key; fingerprint bao gồm resource, payload chuẩn hóa và revision kỳ vọng. Ghi kết quả/dedup record cùng transaction nghiệp vụ/audit. Cùng key và fingerprint trả lại kết quả đã commit, không tạo side effect lần hai; cùng key khác fingerprint trả conflict (409 ở API nghiệp vụ). Hai request cùng key được serialize bằng ràng buộc/transaction; lỗi giữa chừng không để completed record giả. Retry sau mất response phải trả được kết quả đã commit. Luôn authorization lại trước khi trả replay; key không cấp quyền đọc kết quả cũ. TTL/retention và quy tắc chuẩn hóa được ghi trong task plan M4.
+Idempotency cho command được phân vùng theo TenantId + actor/client + operation + key; fingerprint bao gồm resource, payload chuẩn hóa và revision kỳ vọng. Ghi kết quả/dedup record cùng transaction nghiệp vụ/audit. Cùng key và fingerprint trả lại kết quả đã commit, không tạo side effect lần hai; cùng key khác fingerprint trả conflict (409 ở API nghiệp vụ). Hai request cùng key được serialize bằng ràng buộc/transaction; lỗi giữa chừng không để completed record giả. Retry sau mất response phải trả được kết quả đã commit. Luôn authorization lại trước khi trả replay theo mục 6.3; key không cấp quyền đọc kết quả cũ. Không chạy lại precondition trạng thái/revision của command mới khi đã tìm thấy kết quả committed khớp key/fingerprint. TTL/retention và quy tắc chuẩn hóa được ghi trong task plan M4.
 
 Nghiệm thu M4/M5: lỗi audit rollback; cùng key khác payload; request trùng/đồng thời/mất response; xung đột revision; sửa đơn chờ bị chặn; duyệt revision cũ bị chặn; reject/sửa/gửi lại giữ lịch sử; lỗi giữa Order/Approval/Audit rollback toàn bộ, retry không nhân đôi dữ liệu.
+
+<a id="r2-02-approval-obligation"></a>
+### 6.2. Nghĩa vụ duyệt của đơn cũ khi đổi gói — R2-02
+
+V1 chọn **giữ nghĩa vụ duyệt**, không cho downgrade biến đơn từng bị Reject thành Confirmed không qua duyệt. Orders sở hữu marker bền vững `ApprovalRequired`: server đặt true trong transaction Submit đầu tiên cần duyệt; client không được ghi/xóa marker. Reject, sửa nội dung, tăng revision và gửi lại đều giữ true. Sau Approve, giữ marker làm lịch sử; trạng thái Confirmed cho biết nghĩa vụ đã hoàn tất. Draft chưa từng Submit cần duyệt không tự mang nghĩa vụ chỉ vì được tạo khi tenant ở gói Approval; lúc Submit vẫn kiểm tra gói hiện hành và marker.
+
+Điều kiện Submit cần duyệt là **gói hiện hành yêu cầu duyệt OR marker true**. Chỉ Standard với marker false mới xác nhận trực tiếp. Nếu còn nghĩa vụ mà entitlement/feature/handler/schema không hỗ trợ, từ chối và yêu cầu khôi phục cấu hình hợp lệ; không bật lén endpoint Approvals ở Standard và không fallback Confirmed. Dữ liệu thiếu marker hoặc không xác định được nghĩa vụ phải được migration/recovery kiểm tra trước khi mở, không tự mặc định false cho lịch sử cũ.
+
+Guard downgrade trong mục 5.2 kiểm tra `ApprovalRequired = true AND Status != Confirmed`, bao gồm PendingApproval, Rejected và Draft làm lại; trạng thái không nhận diện được giữ đóng để xử lý. Predicate nghiệp vụ đi qua extension contract, không tạo dependency từ platform sang implementation Orders/Approvals. Việc kiểm tra diễn ra sau drain/đóng durable gate như protocol hiện có; Reject hoặc sửa Rejected thành Draft không làm nghĩa vụ biến mất giữa các bước.
+
+V1 chưa có thao tác hủy/đóng đơn chưa duyệt: một đơn Rejected không được sửa/gửi lại và duyệt xong có thể tiếp tục chặn downgrade. Đây là đánh đổi có chủ ý của lựa chọn bảo thủ này; thêm đường kết thúc khác cần review phạm vi/state machine, không dùng xóa đơn, sửa marker hoặc tắt module để né guard. Khi không còn nghĩa vụ, downgrade được phép; các đơn mới hợp lệ ở Standard vẫn Confirmed trực tiếp và lịch sử duyệt cũ được giữ.
+
+M0 ghi lựa chọn vào decision register; M3 có guard contract/fixture; M4 khóa model/ownership/state machine trước implementation; M5 kiểm chứng module thật. Nghiệm thu gồm cả `Rejected → downgrade → sửa → Submit` (downgrade bị chặn, gói cũ được mở lại) và `Rejected → sửa thành Draft → downgrade → Submit` (vẫn bị chặn). Sau gửi lại/Approve đúng revision, downgrade mới được phép. Kiểm tra giả mạo marker, race downgrade với Reject/sửa/gửi lại, mất handler và không mất lịch sử.
+
+<a id="r2-03-replay-policy"></a>
+### 6.3. Authorization của replay và precondition thực thi mới — R2-03
+
+Replay là đọc lại kết quả đã commit trong thời hạn lưu dedup, không phải thực thi lại command. Policy replay bắt buộc có quyền hành động tương ứng còn hiệu lực **và** quyền truy cập tài nguyên/kết quả hiện hành (own/others, giới hạn người tạo và Deny nếu áp dụng). Không dùng trạng thái PendingApproval/Draft hoặc expected revision của lần thực thi mới làm điều kiện bảo mật để đọc kết quả cũ. Task plan M4 khóa mapping policy cho từng command trước implementation, không dùng một policy bỏ qua mọi resource rule.
+
+Thứ tự xử lý bắt buộc:
+
+1. Xác thực và kiểm tra account/session/grant, tenant/generation, membership, feature/entitlement và nguồn quyền hiện hành như mục 4; lỗi nguồn vẫn fail closed. Tra cứu dedup chỉ trong partition TenantId + actor/client + operation + key của request đã xác thực.
+2. Nếu có kết quả committed, dùng định danh tài nguyên đã lưu để kiểm tra policy replay hiện hành trước khi tiết lộ kết quả hoặc xung đột fingerprint. Cùng fingerprint thì trả kết quả đã commit, không chạy lại chuyển trạng thái, kiểm tra optimistic concurrency hay ghi audit thành công lần hai. Fingerprint được tính từ request gốc chuẩn hóa, bao gồm expected revision đã gửi; không thay bằng revision mới của tài nguyên.
+3. Cùng key nhưng khác fingerprint chỉ trả conflict cho người đã qua policy tương ứng; key không tiết lộ tài nguyên/kết quả cho user/tenant khác. Quyền bị thu hồi, Deny mới hoặc tenant bị chặn phải từ chối replay, kể cả khi command trước đây đã thành công. Log truy cập/replay riêng không phải side effect nghiệp vụ lần hai.
+4. Nếu chưa có kết quả committed, áp dụng authorization của command mới và toàn bộ precondition trạng thái, expected revision, business rule cùng durable write gate trong transaction. Ràng buộc unique/serialization vẫn chống hai lần thực thi. Khi đua cùng key làm xuất hiện kết quả committed, quay về nhánh replay và kiểm tra quyền lại; không biến xung đột revision hậu-commit thành lỗi giả của request đã thành công.
+
+Nghiệm thu M4/M5: Submit/Approve commit, response bị mất, trạng thái và revision đã đổi → gửi lại đúng key/payload/expected revision cũ vẫn nhận kết quả đã lưu, chỉ một side effect và một audit nghiệp vụ thành công. Cùng trường hợp nhưng quyền hành động/quyền xem bị thu hồi hoặc có Deny mới → từ chối. Dùng key mới với revision cũ vẫn phải conflict theo precondition bình thường. Bao gồm hai request đồng thời, khác actor/tenant, khác payload và lỗi nguồn quyền; M4 dùng fixture Approvals khi cần, M5 chạy Approve thật. TTL/retention không được ngầm hiểu là bảo đảm replay vô hạn.
 
 ## 7. Roadmap theo milestone
 
@@ -262,9 +305,9 @@ Nghiệm thu M4/M5: lỗi audit rollback; cùng key khác payload; request trùn
 
 **Phụ thuộc:** Không.
 
-**Đầu ra:** ADR cho identity/membership, deny policy, database ownership, token/refresh, lifecycle; trust model CMS; bootstrap/quyền SQL/readiness; protocol đổi gói; decision register có owner/gate; solution skeleton và dependency rules; khóa SDK/packages/provider/tools; AGENTS.md và conventions; scripts thiết lập/check; CI build/test ban đầu. Identity ghi Conditional đến PoC đầu M2, không đánh dấu Accepted chỉ vì restore thành công.
+**Đầu ra:** ADR cho identity/membership, deny policy, database ownership, token/refresh, lifecycle; trust model CMS; bootstrap/quyền SQL/readiness; protocol đổi gói; hợp đồng restore/xác lập lại quyền mục 5.3; lựa chọn giữ nghĩa vụ duyệt mục 6.2 và cổng replay mục 6.3; decision register có owner/gate; solution skeleton và dependency rules; khóa SDK/packages/provider/tools; AGENTS.md và conventions; scripts thiết lập/check; CI build/test ban đầu. Identity ghi Conditional đến PoC đầu M2, không đánh dấu Accepted chỉ vì restore thành công.
 
-**Nghiệm thu:** Clone repository mới, chạy theo README bằng dotnet CLI và pwsh; build/test không cần Visual Studio đầy đủ; không có secret trong Git. Hoàn thành ma trận và lệnh tại mục 7.1, SQL Server smoke thật, architecture checks và báo cáo command/exit code/test counts. Ghi rõ mọi quyết định bổ sung được review trước khi agent triển khai; không bỏ các điều kiện R01–R08 hoặc biến NOT RUN thành PASS.
+**Nghiệm thu:** Clone repository mới, chạy theo README bằng dotnet CLI và pwsh; build/test không cần Visual Studio đầy đủ; không có secret trong Git. Hoàn thành ma trận và lệnh tại mục 7.1, SQL Server smoke thật, architecture checks và báo cáo command/exit code/test counts. Ghi rõ mọi quyết định bổ sung được review trước khi agent triển khai; không bỏ các điều kiện R01–R08, R2-01–R2-03 hoặc biến NOT RUN thành PASS.
 
 <a id="r07-m0-acceptance"></a>
 #### 7.1. Ma trận và bằng chứng nghiệm thu M0 — R07
@@ -308,17 +351,17 @@ Unit/architecture tests tối thiểu kiểm tra dependency graph thật của s
 
 **Phụ thuộc:** M2.
 
-**Đầu ra:** Roles theo tenant; allow/deny/unspecified; per-user override; resource policy; hạn dùng/khóa/gói; UI vận hành tối thiểu; protocol và durable write gate đổi gói ở mục 5.2; audit service/owner/transaction contract đủ dùng trước M4. Hiện thực coordinator tại đây nếu consumer đầu tiên đã cần nhiều context; không dời bắt buộc sang M5.
+**Đầu ra:** Roles theo tenant; allow/deny/unspecified; per-user override; resource policy; hạn dùng/khóa/gói; UI vận hành tối thiểu; protocol và durable write gate đổi gói ở mục 5.2; guard nghĩa vụ duyệt qua contract/fixture mục 6.2; cổng security revalidation, recovery authority và apply contract mục 5.3 (chưa diễn tập SQL restore); audit service/owner/transaction contract đủ dùng trước M4. Hiện thực coordinator tại đây nếu consumer đầu tiên đã cần nhiều context; không dời bắt buộc sang M5.
 
-**Nghiệm thu:** Deny thắng mọi Allow; không thể nâng quyền qua API quản lý role; hết hạn, suspended hoặc membership revoked bị chặn dù JWT chưa hết hạn; tenant khác của cùng user vẫn dùng được. Xóa mềm/purge trên dữ liệu giả không xóa global account hoặc DB khác. Hoàn thiện kiểm tra ở cả UI và API, lỗi nguồn quyền/cache và phạm vi revoke theo mục 4.4. Test protocol đổi gói với fixture, crash/retry/gate/version; không cho direct toggle bỏ guard. Audit platform M1 giữ cùng migration owner.
+**Nghiệm thu:** Deny thắng mọi Allow; không thể nâng quyền qua API quản lý role; hết hạn, suspended hoặc membership revoked bị chặn dù JWT chưa hết hạn; tenant khác của cùng user vẫn dùng được. Xóa mềm/purge trên dữ liệu giả không xóa global account hoặc DB khác. Hoàn thiện kiểm tra ở cả UI và API, lỗi nguồn quyền/cache và phạm vi revoke theo mục 4.4. Test protocol đổi gói với fixture, crash/retry/gate/version; không cho direct toggle bỏ guard. Audit platform M1 giữ cùng migration owner. Fixture restore/security revalidation kiểm tra đóng mặc định, credential mới không dùng ACL cũ, quyền recovery không lấy từ tenant đã restore và lỗi apply/audit giữ đóng.
 
 ### M4 — Orders xuyên suốt
 
 **Phụ thuộc:** M3.
 
-**Đầu ra:** State machine, revision, Submit Standard/Approval, idempotency và extension contracts theo mục 6.1 được khóa trước implementation; Orders module, OrdersDbContext/migrations, application service, API version 1, màn hình riêng, audit và optimistic concurrency. Coordinator sẵn sàng trước consumer đa context đầu tiên nếu M3 chưa cần.
+**Đầu ra:** State machine, revision, Submit Standard/Approval, marker nghĩa vụ duyệt, policy replay và extension contracts theo mục 6.1–6.3 được khóa trước implementation; Orders module, OrdersDbContext/migrations, application service, API version 1, màn hình riêng, audit và optimistic concurrency. Coordinator sẵn sàng trước consumer đa context đầu tiên nếu M3 chưa cần.
 
-**Nghiệm thu:** Tạo/sửa nháp/xem/gửi đơn đúng quyền; phân biệt tài nguyên của mình/người khác; dữ liệu và audit commit cùng nhau; xung đột cập nhật không bị ghi đè âm thầm; UI/API cho cùng kết quả. Orders có extension point để Approvals tham gia mà không phụ thuộc implementation của Approvals. Đạt các ca audit rollback, idempotency khác payload/đồng thời/mất response và bất biến revision ở mục 6.1; không cho fallback Confirmed nếu gói yêu cầu Approval nhưng handler thiếu.
+**Nghiệm thu:** Tạo/sửa nháp/xem/gửi đơn đúng quyền; phân biệt tài nguyên của mình/người khác; dữ liệu và audit commit cùng nhau; xung đột cập nhật không bị ghi đè âm thầm; UI/API cho cùng kết quả. Orders có extension point để Approvals tham gia mà không phụ thuộc implementation của Approvals. Đạt các ca audit rollback, idempotency khác payload/đồng thời/mất response và bất biến revision ở mục 6.1; không cho fallback Confirmed nếu gói hoặc đơn yêu cầu Approval nhưng handler thiếu. Kiểm tra marker được giữ qua Rejected/Draft; replay hậu-commit không chạy lại precondition, nhưng vẫn bị chặn sau thu hồi quyền theo mục 6.3.
 
 ### M5 — OrderApprovals và tính tùy chọn
 
@@ -326,7 +369,7 @@ Unit/architecture tests tối thiểu kiểm tra dependency graph thật của s
 
 **Đầu ra:** ApprovalRequests/decisions, migrations riêng nếu có context riêng, extension vào Orders, một cấp duyệt, kiểm tra người tạo, lý do từ chối; dùng/mở rộng coordinator từ consumer đầu tiên khi cần, không xây trùng. Ghép protocol đổi gói M3 với Orders/Approvals thật.
 
-**Nghiệm thu:** Tenant Approval không xác nhận đơn khi chưa được duyệt; không tự duyệt; hai request đồng thời chỉ một quyết định có hiệu lực; lỗi giữa chừng rollback Order/Approval/Audit. Standard không có endpoint/menu duyệt hoạt động. Tắt feature không xóa dữ liệu và không bỏ qua đơn đang chờ. Race downgrade với Submit/Approve và request đang đợi gate, crash ở từng checkpoint, worker cũ và retry phải đạt mục 5.2; reject/sửa/gửi lại và duyệt đúng revision đạt mục 6.1.
+**Nghiệm thu:** Tenant Approval không xác nhận đơn khi chưa được duyệt; không tự duyệt; hai request đồng thời chỉ một quyết định có hiệu lực; lỗi giữa chừng rollback Order/Approval/Audit. Standard không có endpoint/menu duyệt hoạt động. Tắt feature không xóa dữ liệu và không bỏ qua đơn đang chờ. Race downgrade với Submit/Approve và request đang đợi gate, crash ở từng checkpoint, worker cũ và retry phải đạt mục 5.2; reject/sửa/gửi lại và duyệt đúng revision đạt mục 6.1–6.2. Hai thứ tự Rejected/downgrade/sửa và Rejected/sửa/downgrade đều không né nghĩa vụ duyệt; replay Approve thật hậu-commit/thu hồi quyền đạt mục 6.3.
 
 ### M6 — Release và migration có kiểm soát
 
@@ -334,7 +377,7 @@ Unit/architecture tests tối thiểu kiểm tra dependency graph thật của s
 
 **Đầu ra:** Build artifact/bundles, release manifest theo context/module, script pwsh chạy theo tenant, maintenance gate, lock/retry/report, warm-up Orchard, smoke tests, backup/restore runbook.
 
-**Nghiệm thu:** Database trống và database từ bản trước đều nâng cấp được; áp dụng lại không tạo trùng schema; cố ý làm lỗi một tenant có trạng thái rõ ràng và tiếp tục đúng bước. Kiểm tra cả EF và Orchard, không chỉ HTTP 200. Feature chưa được mở trước khi schema sẵn sàng; release runner kế thừa bootstrap/readiness/đổi gói đã có từ M1/M3, không thay bằng đường tắt thiếu guard. Diễn tập restore một tenant không làm mất tenant khác; khi restore quyền cũ phải đối soát membership/quyền hiện tại, không mặc nhiên mở lại đặc quyền đã bị thu hồi.
+**Nghiệm thu:** Database trống và database từ bản trước đều nâng cấp được; áp dụng lại không tạo trùng schema; cố ý làm lỗi một tenant có trạng thái rõ ràng và tiếp tục đúng bước. Kiểm tra cả EF và Orchard, không chỉ HTTP 200. Feature chưa được mở trước khi schema sẵn sàng; release runner kế thừa bootstrap/readiness/đổi gói đã có từ M1/M3, không thay bằng đường tắt thiếu guard. Diễn tập restore một tenant không làm mất tenant khác; thực hiện protocol mục 5.3 với platform hiện hành ngoài phạm vi restore. Backup → thu hồi quyền nhưng giữ membership → restore → xác lập bộ quyền mới và đăng nhập mới vẫn không hồi sinh quyền cũ; kiểm tra riêng role assignment, role permission, override/Deny và crash/checkpoint. Không coi chỉ thu hồi token cũ hoặc bắt login lại là đã đạt.
 
 EF migration bundles dùng cho job tự động; SQL scripts khi cần review. Orchard migration được chạy bằng shell thích hợp, không nằm trong EF bundle. [8][9]
 
@@ -359,7 +402,7 @@ Test tải ban đầu đề xuất 25 virtual users mỗi tenant, tổng 100, c�
 
 Baseline tải giữ cả bốn tenant Active; test lifecycle thay đổi Delta trong kịch bản riêng. Có tài khoản chỉ ở Alpha, tài khoản ở nhiều tenant với role khác nhau, tài khoản không có membership và tài khoản vận hành.
 
-Các ca lỗi phải có: đổi URL/token/body TenantId; feature bị tắt nhưng gọi API trực tiếp; session/role/membership bị thu hồi; cache không phân tách tenant; audit lỗi; migration lỗi; retry refresh; hai tab khác tenant; restore làm xuất hiện dữ liệu quyền cũ; xóa tenant không xóa tài khoản dùng chung. Bổ sung ca CMS/template/upload bị cấm, bootstrap anonymous, readiness lỗi, mất nguồn quyền, refresh đồng thời/mất response, membership remove/re-add, token cũ sau gia hạn/mở lại, downgrade đua Submit/Approve, crash/retry/version cũ và replay idempotency khác payload theo các hợp đồng R01–R06.
+Các ca lỗi phải có: đổi URL/token/body TenantId; feature bị tắt nhưng gọi API trực tiếp; session/role/membership bị thu hồi; cache không phân tách tenant; audit lỗi; migration lỗi; retry refresh; hai tab khác tenant; restore làm xuất hiện dữ liệu quyền cũ; xóa tenant không xóa tài khoản dùng chung. Bổ sung ca CMS/template/upload bị cấm, bootstrap anonymous, readiness lỗi, mất nguồn quyền, refresh đồng thời/mất response, membership remove/re-add, token cũ sau gia hạn/mở lại, downgrade đua Submit/Approve, crash/retry/version cũ và replay idempotency khác payload theo các hợp đồng R01–R06. Vòng 2 bổ sung restore rồi đăng nhập mới sau thu hồi quyền với membership còn Active; recovery không tin ACL/audit đã restore; hai thứ tự Rejected/sửa/downgrade; replay sau commit đổi trạng thái/revision và replay sau thu hồi quyền theo mục 5.3, 6.2–6.3.
 
 ## 9. Tổ chức repository dự kiến
 
@@ -417,7 +460,7 @@ Không cho nhiều agent cùng sửa model snapshot, context model hoặc migrat
 
 Definition of Done cho thay đổi code/runtime: diff được review, dotnet build/test thành công, integration test SQL Server thành công cho thay đổi dữ liệu, negative authorization tests đạt, migration được review, không lộ secret và tài liệu được cập nhật. Không coi lời báo của agent là bằng chứng thay cho lệnh kiểm thử. Thay đổi chỉ Markdown như revision này kiểm tra diff/phạm vi, UTF-8, liên kết/anchor và coverage findings; ghi build/test/runtime là NOT RUN, không nhận là hoàn thành milestone.
 
-Task plan và decision register M0 phải mang theo owner, trạng thái, cổng nghiệm thu và bằng chứng còn thiếu của R01–R08 trong [bảng xử lý](../reviews/2026-11-06-roadmap-v1-remediation.md). `Documented` chỉ nghĩa là yêu cầu đã được bổ sung; chỉ evidence tại milestone sở hữu mới đóng verification. Chủ dự án giữ quyền review/merge; implementer không tự nâng Conditional thành Accepted hoặc bỏ negative test để có CI xanh.
+Task plan và decision register M0 phải mang theo owner, trạng thái, cổng nghiệm thu và bằng chứng còn thiếu của R01–R08 trong [bảng xử lý vòng 1](../reviews/2026-11-06-roadmap-v1-remediation.md) và R2-01–R2-03 trong [bảng xử lý vòng 2](../reviews/2026-11-06-roadmap-v1-round2-remediation.md). `Documented` chỉ nghĩa là yêu cầu đã được bổ sung; chỉ evidence tại milestone sở hữu mới đóng verification. Chủ dự án giữ quyền review/merge; implementer không tự nâng Conditional thành Accepted hoặc bỏ negative test để có CI xanh.
 
 ## 11. Sau V1 và điều kiện trước production
 
@@ -443,3 +486,4 @@ Các mục tiêu sản phẩm và tiêu chí nghiệm thu trong tài liệu là 
 10. OpenAI Codex execution plans: https://developers.openai.com/cookbook/articles/codex_exec_plans
 11. EF Core multiple database providers: https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/providers
 12. WHATWG HTML — Origins: https://html.spec.whatwg.org/multipage/browsers.html#origin
+13. SQL Server restore về thời điểm trước: https://learn.microsoft.com/en-us/sql/relational-databases/backup-restore/restore-a-sql-server-database-to-a-point-in-time-full-recovery-model
