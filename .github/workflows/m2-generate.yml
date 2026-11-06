@@ -2,7 +2,7 @@ name: M2 owned generated inputs
 on:
   push:
     branches: [feat/m2-identity-poc]
-    paths: ['Directory.Packages.props', 'src/Platform/SaaS.Identity/SaaS.Identity.csproj', 'src/Platform/SaaS.Tenancy/Data/Identity*.cs', '.github/workflows/m2-generate.yml']
+    paths: ['Directory.Packages.props', 'src/SaaS.Web/SaaS.Web.csproj', 'src/Platform/SaaS.Identity/SaaS.Identity.csproj', 'src/Platform/SaaS.Tenancy/Data/Identity*.cs', '.github/workflows/m2-generate.yml']
 permissions:
   contents: write
 concurrency:
