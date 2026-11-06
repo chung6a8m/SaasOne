@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup><UserSecretsId>SaasOne.Web.Development</UserSecretsId></PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="OrchardCore.Application.Cms.Core.Targets" />
+    <PackageReference Include="OrchardCore.Application.Targets" />
+    <PackageReference Include="OrchardCore.Infrastructure" />
+    <PackageReference Include="OrchardCore.OpenId" />
     <ProjectReference Include="../Platform/SaaS.Tenancy/SaaS.Tenancy.csproj" />
     <ProjectReference Include="../Platform/SaaS.Identity/SaaS.Identity.csproj" />
     <ProjectReference Include="../Platform/SaaS.AccessControl/SaaS.AccessControl.csproj" />
