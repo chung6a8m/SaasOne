@@ -1,69 +1,34 @@
-# M2 — Central identity implementation plan
+# M2 — Central identity implementation ledger
 
 Baseline: `2e1dd5568c204e3422e8c9222771e7796cf0eb25` (merged M1 PR #3).
 Specification: `docs/roadmap/saas-orchard-roadmap-v1.md` revision 1.3, sections 3, 4.1–4.4 and M2.
-Branch: `feat/m2-identity-poc`; draft PR #4.
+Branch: `feat/m2-identity-poc`; PR #4.
 
-**M2 remains incomplete. ADR 0001 remains Conditional — pending the complete M2 PoC.** The project owner retains architecture/security acceptance and merge authority. A native-store subcomponent result is not an accepted identity architecture.
+The original nine-store-case-only handoff is historical, not the current implementation. Its exact source-bound limitations and log-hygiene history are retained in `docs/verification/m2-initial-store-poc.md`. Current gate results are in `docs/verification/m2.md`; the detailed completion design is `m2-completion.md`, and operator commands are in `../runbooks/m2-identity.md`. A list of implemented components is not a substitute for a passing gate on the submitted SHA.
 
-## Boundaries and execution order
+## Delivered implementation
 
-Implement the cross-shell PoC first, on the pinned Orchard/YesSql/OpenIddict/.NET graph. No dependent production identity rollout before this gate passes. Do not replace Orchard Users/OpenID Server with a hand-written password/JWT endpoint. No shared tenant cookies, account linking by email, token-selected database, permission decisions cached between requests, or database migrations at HTTP startup. Missing runtime prerequisites or missing tests must not become PASS.
+| Workstream | Components and verification boundary |
+|---|---|
+| Initial cross-shell proof | Real SQL/Orchard/YesSql store bridge and native HTTP fixture. The complete 37-case native HTTP PoC passed in run `42289975570` before production composition was added. |
+| Native central identity | Orchard Users/OpenIddict at Default; deployment-owned server settings and persisted certificates; real code/PKCE redemption; independent customer OIDC cookies; central login and tenant choice. |
+| Durable authority | Exact issuer+subject to immutable GlobalUserId; unique memberships; account/tenant/membership generations; persistent sessions/families and captured subscription bounds in the platform-owned `identity` schema. |
+| API and web validation | Cryptographic JWT validation followed by fresh Default native token/authorization and platform authority reads. Routed tenant binding, no credential-selected connection, no cross-request Allow cache. |
+| Refresh/revocation | Hashed single-use consumption ledger, family-scoped SQL serialization, strict reuse handling, independent-family survival, tenant/global logout, lockout and non-resurrection after reactivation or restart. |
+| Production composition | Shared `IdentityRuntimeHost` used by Program and acceptance tests; registry-backed shell settings, HTTPS/host checks, readiness, exact callback boundary and explicit endpoint allowlist. |
+| Private operations | Initialization, verify-only completed retry, explicit client registration, native enrollment, membership/account/subscription commands, operational audit and restricted runtime SQL credentials. |
+| Acceptance and hygiene | Complete inherited M0/M1 gates, retained platform migration/snapshot, 30 named mandatory M2 contracts plus every discovered case, JSON/TRX artifacts, read-only workflow and no generated-input write workflow. |
 
-### Task 1 — Reproducible PoC and issuer-store proof (in progress)
+## Authority and ownership rules
 
-Files: `tests/Unit/SaaS.UnitTests/IdentityPoc`, `scripts/check-m2.ps1`, `scripts/m2-sql-fixture.ps1`, `.github/workflows/m2.yml`, this plan and `docs/verification/m2.md`.
+Native Users/OpenID documents remain Orchard-owned. `PlatformDbContext` is the sole migration owner of platform identity rows; there is no competing identity EF context. Customer databases retain their M1 foundation and do not become central credential stores. Customer native OpenID stores in the original fixture are negative controls only.
 
-The SQL tests deliberately reuse the existing test project and M1 SQL fixture instead of introducing another dependency graph. They are selected with `Category=SqlM2`; M0 excludes both `SqlM1` and `SqlM2`. Customer databases and runtime principals are real, not EF InMemory or mocked token managers.
+The retained test-only `DefaultIssuerStoreProbe` proves exact native-store linkage but is not an authenticator. Production `DefaultIssuerStore` runs only after cryptographic authentication or protected-cookie validation, in a fresh Default shell scope with native entity caching disabled. Missing/expired/revoked/mismatched entries deny access; required-source failures return unavailable, not cached Allow. The native canonical token-type URN is checked, not the OAuth token-type hint.
 
-Consumes: the M1 fixed platform connection, private Orchard shell factory, provisioned Alpha/Beta SQL databases, separate migrator/runtime credentials and the inherited baseline gates.
-Produces: a source-bound PoC report, including failed and missing mandatory cases. No production registration is enabled by adding this fixture.
+No shared tenant cookies, account linking by email, global mutable CurrentTenant, public provisioning/admin shortcut, runtime migration, arbitrary native-controller exposure or plaintext refresh persistence is permitted. Callback destinations must agree with the authoritative platform registry before native protocol handlers may redirect. A completed private initialization is a read-only verification boundary, not permission to reset clients or repair native history.
 
-- [x] Read ADRs, pinned native Orchard authentication/storage implementation and M1 contracts.
-- [x] Execute the first failing PKCE HTTP test and the native-store behavioral RED cases before implementing the bridge. This does not mean all M2 acceptance tests have been implemented.
-- [x] Implement a test-only native-store bridge and real-SQL regression cases; see source-bound verification history for their actual results.
-- [ ] Prove Authorization Code + PKCE, central Orchard Users login and SSO, two independent prefixed callbacks/cookies, strict redirect/logout allowlists and issuer+subject mapping.
-- [ ] Prove explicit JWT format, signature/issuer/audience/scope/expiry validation and Alpha token rejection at Beta.
-- [ ] Integrate Default-store validation into authenticated API and web requests, and prove committed revocation blocks the next request.
-- [ ] Prove all authoritative-source failures close access, serialized strict refresh rotation/reuse/concurrency/lost response, with tenant-local family/session revocation scope.
-- [ ] Complete all mandatory PoC cases and present evidence for owner review. Do not promote ADR status automatically.
+## Verification and review
 
-#### Candidate store adapter contract
+Run `pwsh -NoProfile -File scripts/check-m2.ps1`. It executes locked restore/Release build, all M0 behavioral/architecture/hygiene/lock checks, both EF snapshot checks, inherited SQL smoke, complete M1 SQL tests and all `Category=SqlM2` tests. Missing mandatory cases, duplicate/zero execution, failures, skips or cleanup failure cannot pass. The `m2-poc.json` path is retained for evidence compatibility and now includes native HTTP, production-composition and private-command contracts.
 
-`DefaultIssuerStoreProbe.ValidateAsync(IssuerEntry entry, CancellationToken cancellationToken)` returns `Valid`, `Invalid` or `Unavailable`; caller cancellation propagates as cancellation. `IssuerEntry` contains the immutable native token identifier, authorization identifier and subject. These values must eventually come from an already cryptographically validated token, not directly from untrusted request fields.
-
-The adapter always opens a fresh `Default` shell scope. It refuses an entity-cache-enabled OpenIddict configuration, then resolves native token and authorization managers in that issuer scope. It requires a valid, unexpired access-token entry, exact subject and authorization linkage, and a valid authorization with the same subject. Missing/expired/revoked/mismatched records are invalid. Scope, store or configuration failure is unavailable, not a cached allow or invalid-password response.
-
-**`Valid` only means these store checks passed.** This adapter does not validate JWT signatures, issuer, audience, scopes, tenant binding, account/membership status or web sessions. It is not an authentication handler. The proposed HTTP mapping of unavailable to 503 has not been implemented here.
-
-OpenIddict 7.5 persists canonical `TokenTypeIdentifiers` URNs. Do not compare the stored type with `TokenTypeHints.AccessToken`. The native binding regression test retains the actual resolved type expectation. Orchard's native token/authorization documents belong to the `OpenId` YesSql collection, so dependency-failure injection must target that collection rather than the unrelated default document table.
-
-#### Persistence and privilege ownership
-
-Orchard owns all native OpenID tables and migrations. The fixture creates isolated, randomly prefixed native tables only in disposable databases and through the private maintenance shell. Test setup grants DML only on those exact tables to each existing runtime principal. Runtime gets no DDL, schema-wide DML or `db_owner`. Writes use native managers and a committed YesSql session, not hand-written updates to Orchard documents. Customer OpenID stores exist only as negative controls in this fixture; they are not a selected production topology.
-
-No production hosting, EF model, migration, snapshot, package version, lock file, M1 descriptor or readiness fingerprint is changed by this PoC.
-
-### Task 2 — Identity data and dynamic authority (blocked by task 1)
-
-Files: `src/Platform/SaaS.Identity`, `src/Platform/SaaS.Abstractions`, the single platform-owned EF migration stream in `src/Platform/SaaS.Tenancy`, matching tests and retained snapshot. One writer owns this model/migration stream.
-
-Provide immutable GlobalUserId and issuer+subject mapping, unique memberships and monotonic account/tenant/membership generations; persistent session/family revocation and issuance-time subscription bounds. Final production signatures require the full PoC outcome, not just the store adapter above.
-
-Tests: same-email/different-subject never links; membership remove/re-add; suspend/reopen, expiry/renewal, restart; account lock; errors in each authoritative source. Read committed state afresh at authorization. Proposed ADR limits remain proposals for owner review: access 5 minutes / 30-second tolerance; refresh idle 7 days / absolute 30 days; web idle 30 minutes / absolute 8 hours, always bounded by issuance-time ExpiresAt.
-
-### Task 3 — Central login, tenant choice and protected probe (blocked by tasks 1–2)
-
-Files: identity module/controllers/handlers and product-host composition; tenant selection UI and protected probe only, not M3 role management or Orders. Use real Authorization Code + PKCE; callbacks/logout and cookies remain independently prefixed and allowlisted. Tenant identity comes exclusively from the routed shell. POST mutations require antiforgery. Persist signing/encryption/Data Protection keys outside Git; no refresh token in browser storage or logs.
-
-Tests: one account enters Alpha/Beta but not Gamma; two tabs preserve context; wrong issuer/audience/expiry/scope and swapped tenant token fail; tenant logout versus global logout; API 401/403/503 and non-looping UI dependency errors with correlation identifiers.
-
-### Task 4 — Regression and handoff (gate implemented; M2 acceptance pending)
-
-Run `pwsh -NoProfile -File scripts/check-m2.ps1`. It runs locked restore/Release build, all M0 behavioral/architecture/hygiene/lock checks, both retained EF snapshot checks, inherited SQL smoke, the complete M1 real-SQL/Orchard suite, and then M2. Zero discovery, a mandatory skip, a failure or a missing mandatory case cannot pass. Preserve exact source SHA, commands/exit codes, image identity, discovered/executed/passed/failed/skipped counts and the mandatory-case inventory.
-
-M2 CI runs for the work branch, `main` and PRs into `main`. The temporary source-export/offline-tooling workflows were removed; the final diff retains only verification workflows. PR #4 must remain Draft until the complete identity acceptance evidence is available. Existing review records and ADR status are unchanged.
-
-## Execution constraints
-
-The initial local workspace lacked the pinned .NET/PowerShell tools and could not resolve GitHub. An attempted offline workspace subsequently hit container execution errors. All retained build and SQL evidence therefore comes from source-identified GitHub Actions runs, not a synthetic local commit. This constraint is not an M2 acceptance result and does not waive any test.
+All recorded build/SQL evidence comes from actual source-identified GitHub Actions runs; no local execution is claimed. TestServer substitutes transport only. Real deployment DNS/TLS/proxy/secret permissions, independent review, owner acceptance of ADR 0001 and merge remain separate activities. Roles, per-user grants/denies, full lifecycle/operations UI and Orders belong to subsequent milestones.

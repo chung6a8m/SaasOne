@@ -1,37 +1,42 @@
-# M2 completion implementation plan
+# M2 completion design and execution ledger
 
-Baseline: `d71bca7ee077003dd47a641f9a37369ed2fba1f5`, PR #4. Specification: roadmap revision 1.3 sections 3, 4.1–4.4 and M2; ADR 0001 remains Conditional until owner acceptance. This plan supplements `m2-identity.md`; it does not weaken the complete mandatory-case gate.
+Starting handoff: `d71bca7ee077003dd47a641f9a37369ed2fba1f5`, Draft PR #4. Base M1: `2e1dd5568c204e3422e8c9222771e7796cf0eb25`. Specification: roadmap revision 1.3 sections 3, 4.1–4.4 and M2. This supplements `m2-identity.md`; it does not weaken any mandatory-case gate. Current source-bound counts and final verification are in `../verification/m2.md`.
 
 ## Architecture and boundaries
 
-The native Orchard Users/OpenID Server and native OpenIddict/YesSql stores remain at Default. Customer shells use ASP.NET Core's OpenIdConnect handler with PKCE and independent secure cookies; they do not enable Orchard Users or link by email. A deployment-owned `IOpenIdServerService` supplies immutable settings and persisted signing/encryption certificates to the native server; no hand-written JWT/password grant. Native protocol validation, code redemption, signing and token storage are retained. Explicit application endpoints supply tenant-checked principals.
+Native Orchard Users/OpenID Server and OpenIddict/YesSql remain at Default. Customer shells use ASP.NET Core's OIDC handler with Authorization Code + PKCE and independent secure cookies; they do not enable Orchard Users or link by email. A deployment-owned `IOpenIdServerService` supplies trusted settings and persisted signing/encryption certificates to the native server. Protocol validation, code redemption, signing and token storage remain native. Application endpoints supply principals only after tenant membership and current-state validation.
 
-PlatformDbContext remains the only EF migration owner of platform identity data. Identity entities use the `identity` schema to avoid granting writes to the read-only tenant registry. Native Users/OpenID tables remain Orchard-owned. Identity code references Tenancy and Abstractions, never business modules. No customer database is selected from credentials. Production registration is added only after the isolated native HTTP PoC passes.
+`PlatformDbContext` remains the sole EF migration owner of platform identity rows. These use the `identity` schema so customer-registry writes need not be granted to runtime. Native Users/OpenID tables remain Orchard-owned. Identity references Tenancy/Abstractions, never business modules. The routed shell selects the customer connection; credentials cannot select a database. The native HTTP PoC was demonstrated before dependent production registration.
 
-Lifetimes selected for this implementation, pending owner security review: access 5 minutes, clock tolerance 30 seconds; refresh idle 7 days / absolute 30 days; tenant and issuer web sessions idle 30 minutes / absolute 8 hours. Every tenant grant/session is bounded by subscription expiry captured at issuance. No dynamic Allow cache across requests.
+Lifetime candidates, pending owner security acceptance: access five minutes, cryptographic clock tolerance 30 seconds; refresh idle seven days / absolute 30 days; issuer and tenant web sessions idle 30 minutes / absolute eight hours. Tenant credentials additionally capture subscription expiry. Renewal cannot extend that captured boundary. Native store validation may reject an actually expired access entry even inside cryptographic clock tolerance. No dynamic Allow cache crosses request boundaries.
 
-## Locked interfaces and ownership
+## Components and ownership
 
-- `IdentityDeployment`: canonical HTTPS issuer, persisted signing/encryption certificates and Data Protection directory, explicit client registrations keyed by routed shell. Secrets are environment/file references only. A host with missing/invalid identity configuration stays closed.
-- `IdentityAuthority`: fresh fixed-platform EF contexts for exact issuer+subject mapping, memberships, accounts, sessions, grant families and hashed refresh consumption. `ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken)` returns an explicit decision. `ConsumeRefreshAsync(string token, string clientId, string? requestedTenant, CancellationToken)` serializes by durable family lock, consumes once and revokes only that family/session on reuse. Raw refresh tokens are never stored.
-- `DefaultIssuerStore`: native token/authorization checks in fresh Default shell scope with entity caching disabled. This follows cryptographic authentication and is never itself an authenticator.
-- `IdentityEndpoints`: central native Users login, tenant selection, authorization-code/token passthrough, tenant account UI and bearer-only `api/v1/identity` probe. UI mutations use antiforgery; OAuth errors follow protocol semantics. Credential failure=401, membership/tenant policy=403, mandatory dependency failure=503 with correlation id.
-- `IdentityHttpFixture`: isolated native SQL/Orchard HTTP host; no fake auth handler or seeded bearer principal. Browser helper follows real cookies, redirects, PKCE and code redemption. Candidate wiring is test-only until the full PoC is demonstrated.
-- Private maintenance commands own membership/lifecycle changes and identity bootstrap; audit is committed with authoritative EF changes. No public setup/admin/membership management shortcut. M3 owns full management UI and dynamic business roles.
-
-## Tasks
-
-1. **Native HTTP PoC.** Add failing HTTP behavior tests, then native Users/server/client wiring and persisted key configuration. Files: `tests/Unit/SaaS.UnitTests/IdentityPoc/*`, candidate `src/Platform/SaaS.Identity/*`. Prove central login, two-shell SSO, cookies, callback allowlists and code/PKCE. Keep native-store regression cases.
-2. **Durable authority and protocol binding.** Add tests before implementations for mapping, membership and generation lifecycle, JWT checks, tenant binding, session expiry, issuer-store and platform failures. Files: `src/Platform/SaaS.Tenancy/Data/Identity*`, partial PlatformDbContext model, owned migration/snapshot; identity services. Fresh reads only; SQL Server required.
-3. **Strict refresh and revocation.** Test concurrent refresh, lost response/reuse, independent families, logout scopes, account/tenant disable and restart. Serialize before native redemption using a SHA-256 credential lookup in the fixed platform store; commit consumption before issuance and retain lock through native response persistence. Native protocol validation is not bypassed. Errors never revive consumed credentials.
-4. **Production integration after PoC.** Add private initialization/upgrade command, explicit native feature profile and DML grants, readiness validation and host registration. Preserve M1 baseline mode; identity is opt-in only after private schema/profile initialization, never a runtime auto-migrate. Exercise the same components from the production host.
-5. **Verification and review.** Run full `scripts/check-m2.ps1`, complete M0/M1 SQL regressions, exact migration snapshot checks, package/feature graph and secret hygiene. Every required case must execute; missing/skip/zero is failure. Record tested SHA and counts, update runbook/ADR evidence and PR. Do not merge or self-promote ADR to Accepted.
-
-## Review focus
-
-Refresh lock release on cancellation/failure; no two surviving chains; issuer cookie cannot resurrect global logout; no old-generation revival after re-add/renew/unlock; wrong prefix/body/token never chooses a connection; default native controllers remain inaccessible outside the explicit allowlist; issuance/configuration failures do not return a credential or cached Allow; startup never performs DDL.
+- `IdentityDeployment` validates canonical HTTPS origin, independent persisted RSA certificates, persistent Data Protection directory and client metadata. Client secrets are supplied by deployment references keyed by immutable tenant UUID, never argv or tracked JSON.
+- `IdentityAuthority` reads fresh fixed-platform account, subject, membership, session and family state. It validates generations, current lifecycle, idle/absolute limits and issuance-time subscription bounds. `DefaultIssuerStore` opens a fresh Default scope for native account/token/authorization checks with caching disabled.
+- `RefreshRotation` serializes each family with a SQL application lock, records a hash-only token consumption before native redemption, retains the lock through response persistence and invalidates the family on reuse. Failure or lost response cannot make an old token reusable.
+- `IdentityEndpoints` provides central native login, tenant choice, authorized native code/token passthrough, tenant account UI and the bearer-only `api/v1/identity` probe. UI mutations require antiforgery. Account second-factor requirements fail closed rather than being bypassed.
+- `IdentityRuntimeHost` is shared by Program and product-host acceptance tests. It composes registry-backed settings, exact HTTP/callback allowlists, readiness, HTTPS/host validation and sanitized errors. Missing initialization or corrupt history closes access; it never migrates or repairs state.
+- `IdentityInstaller` and the pre-host maintenance CLI own private bootstrap, explicit client registration and native enrollment. `IdentityOperations` owns atomic membership/account/subscription generation changes and audit. Runtime SQL credentials cannot manage the authoritative registry/memberships/clients or schema.
 
 ## Execution ledger
 
-- Resuming the existing feature branch and draft PR; no main edits. Local container/Python tool backend returned ClientError, so verification uses the repository's pinned GitHub Actions runner. No offline SDK export is needed.
-- All completion tasks remain pending until evidence is recorded. Author self-review is not independent owner/security approval.
+| Stage | Executed change and observed evidence |
+|---|---|
+| Native store proof | Existing test-first store bridge retained; the initial nine-pass/one-404-failure handoff is archived, not relabeled as complete identity proof. |
+| Native HTTP wiring | Added real Users/server/client paths and the full acceptance cases. Fixed missing native document management and entity ID generation; these were fixture/composition blockers, not behavioral passes. |
+| Authority and refresh | Implemented platform-owned model/migration, exact mapping, immutable binding, persistent generations/sessions/families, strict rotation, failure handling and lifecycle tests. |
+| Remaining native failures | Fixed Orchard's pre-increment failure count at lockout, web-first visibility of native access revocation and root TimeProvider replacement. Added regressions for independent web lifetime and restart. |
+| PoC prerequisite | Branch `4c07a4e711c2460ded750938c47881a95405b9ae`, run `42289975570`: full inherited gate and 37/37 native-store/HTTP cases passed before production integration. |
+| Product-host contracts | Added three tests first; run `42290933413` retained 37 passing cases and failed the three missing integration contracts. Then registry-backed production composition and completed-retry verification were implemented. |
+| Private CLI contract | Run `42292635442` passed 40/41 cases, including all production-host contracts; the only failure was the deliberately not-yet-implemented private command dispatcher. CLI implementation followed. |
+| Callback registry contract | Run `42293839126` passed 41/42, including the private CLI case. A drifted native callback was incorrectly redirected with 302; the new production guard compares the independent registry before native handlers. |
+| Final gate and handoff | See `../verification/m2.md` and PR #4 for the exact submitted source/run/artifact identities. The mandatory inventory now includes production, CLI, native lockout and web-first revocation, not only the initial 18 PoC cases. |
+
+The work stays on the existing feature branch; no `main` edits or merge were performed. The local execution backend was unavailable, so all retained build and SQL evidence comes from the pinned Actions runner. The generated-input write workflow is removed; retained CI is read-only and archives only JSON/TRX. HTML/cookie/token-bearing assertion diagnostics are avoided.
+
+## Review focus and acceptance boundary
+
+Review lock release on cancellation/failure; absence of two surviving refresh chains; exact client/tenant binding before consumption; logout scopes; non-resurrection after re-add, reopen, renewal and unlock; fresh native validation on web-first requests; immutable routing/database identity; native callback drift; and verify-only completed bootstrap behavior. Current checks must not be replaced with token expiry, cached Allow or public setup.
+
+ADR 0001 remains Conditional for the project owner's architecture/security decision. The lifetime defaults, strict lost-response/re-login behavior and deployment/key-management constraints need explicit acceptance. Author self-review is not independent review. Real deployment TLS/proxy/logging/access controls and subsequent M3 authorization/lifecycle UI are not claimed as implemented by this milestone's test evidence.
