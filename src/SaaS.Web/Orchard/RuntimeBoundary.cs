@@ -11,6 +11,7 @@ public sealed record RoutedTenantSelection(Guid TenantId, string Shell, long Reg
 public static class RuntimeBoundary
 {
     private static readonly string[] Closed = ["setup", "admin", "api", "connect", "media", "templates", "features", "recipes"];
+    private static readonly SemaphoreSlim ReloadGate = new(1, 1);
     public static async Task EnterAsync(HttpContext context, RequestDelegate next)
     {
         context.Response.Headers.CacheControl = "no-store";
@@ -36,17 +37,21 @@ public static class RuntimeBoundary
             if (!bootstrap.Completed || bootstrap.BaselineVersion != 1 || bootstrap.InstallationId == Guid.Empty)
                 throw new TenantContractException("platform_not_ready");
             await TenancyConnections.VerifySchemaAsync(platform, context.RequestAborted);
+            ShellSettings expected;
             if (path == "/health/ready")
             {
                 await SqlOperations.RequireRuntimeAsync(connections.Platform("runtime"), context.RequestAborted);
                 await FoundationProfile.ReadSnapshotAsync(connections.Platform("runtime"), context.RequestAborted);
                 context.Features.Set(new RoutedTenantSelection(bootstrap.InstallationId, "Default", 0));
+                expected = NativeServices.Settings("Default", string.Empty, bootstrap.InstallationId, connections.Platform("runtime"));
             }
             else
             {
                 if (segments.Length == 0 || path != "/" + segments[0] + "/" && path != "/" + segments[0] + "/health/ready")
                 { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
-                var slug = TenantSlug.Parse(segments[0]).Value;
+                string slug;
+                try { slug = TenantSlug.Parse(segments[0]).Value; }
+                catch (TenantContractException) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
                 var tenant = await platform.Tenants.AsNoTracking().SingleOrDefaultAsync(item => item.Slug == slug, context.RequestAborted);
                 if (tenant is null) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
                 if (!TenantPolicy.IsOperational(tenant.Status(), DateTimeOffset.UtcNow)) throw new TenantContractException("tenant_not_operational");
@@ -56,27 +61,52 @@ public static class RuntimeBoundary
                 var native = await FoundationProfile.ReadSnapshotAsync(selected, context.RequestAborted);
                 await TenantDatabaseVerifier.VerifyAsync(tenant, selected, native, context.RequestAborted);
                 context.Features.Set(new RoutedTenantSelection(tenant.Id, tenant.Slug, tenant.RegistryVersion));
+                expected = NativeServices.Settings(tenant.Slug, tenant.Slug, tenant.Id, selected);
             }
+            // Only a fully verified registry selection may refresh the native routing table.
+            await EnsureNativeShellAsync(context, expected);
             await next(context);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
         catch { if (!context.Response.HasStarted) await UnavailableAsync(context); else context.Abort(); }
     }
 
+    private static async Task EnsureNativeShellAsync(HttpContext context, ShellSettings expected)
+    {
+        var host = context.RequestServices.GetRequiredService<IShellHost>();
+        await host.InitializeAsync();
+        bool Current() => host.TryGetSettings(expected.Name, out var actual)
+            && actual.RequestUrlPrefix == expected.RequestUrlPrefix && actual["SaaS:TenantId"] == expected["SaaS:TenantId"]
+            && actual["ConnectionString"] == expected["ConnectionString"] && actual["DatabaseProvider"] == "SqlConnection"
+            && actual["TablePrefix"] == "oc" && actual["Schema"] == "dbo";
+        if (Current()) return;
+        await ReloadGate.WaitAsync(context.RequestAborted);
+        try
+        {
+            if (!Current()) await host.ReloadShellContextAsync(expected, eventSource: false);
+            if (!Current()) throw new TenantContractException("shell_settings_changed");
+        }
+        finally { ReloadGate.Release(); }
+    }
+
     public static async Task RespondFromShellAsync(HttpContext context)
     {
         var expected = context.Features.Get<RoutedTenantSelection>() ?? throw new TenantContractException("unvalidated_shell_route");
         var settings = context.RequestServices.GetRequiredService<ShellSettings>();
-        if (settings.Name != expected.Shell || settings["SaaS:TenantId"] != expected.TenantId.ToString("D"))
+        var connections = context.RequestServices.GetRequiredService<TenancyConnections>();
+        if (settings.Name != expected.Shell || settings["SaaS:TenantId"] != expected.TenantId.ToString("D")
+            || settings["DatabaseProvider"] != "SqlConnection" || settings["TablePrefix"] != "oc" || settings["Schema"] != "dbo")
             throw new TenantContractException("routed_shell_mismatch");
         if (settings.Name == "Default")
         {
-            if (context.Request.Path != "/health/ready" || context.Request.PathBase.HasValue) throw new TenantContractException("default_shell_not_a_customer");
+            if (context.Request.Path != "/health/ready" || context.Request.PathBase.HasValue || settings["ConnectionString"] != connections.Platform("runtime"))
+                throw new TenantContractException("default_shell_not_a_customer");
             await context.Response.WriteAsJsonAsync(new { status = "ready", scope = "platform" }, context.RequestAborted);
             return;
         }
         var tenant = context.RequestServices.GetRequiredService<TenantContext>();
-        if (context.Request.PathBase != "/" + tenant.UrlPrefix || tenant.TenantId != expected.TenantId)
+        if (context.Request.PathBase != "/" + tenant.UrlPrefix || tenant.TenantId != expected.TenantId
+            || settings["ConnectionString"] != connections.Customer(tenant.TenantId, "runtime"))
             throw new TenantContractException("routed_shell_mismatch");
         var platform = context.RequestServices.GetRequiredService<PlatformDbContext>();
         var current = await platform.Tenants.AsNoTracking().SingleAsync(item => item.Id == tenant.TenantId, context.RequestAborted);
@@ -85,6 +115,7 @@ public static class RuntimeBoundary
         var database = context.RequestServices.GetRequiredService<TenantDbContext>();
         var identities = await database.Identity.AsNoTracking().Take(2).ToArrayAsync(context.RequestAborted);
         TenantIdentity.Verify(tenant.TenantId, identities.FirstOrDefault()?.TenantId, identities.Length);
+        if (identities[0].DatabaseNonce != current.DatabaseNonce) throw new TenantContractException("database_identity_mismatch");
         var home = TenantAddress.Link(tenant, string.Empty);
         if (context.Request.Path == "/health/ready")
             await context.Response.WriteAsJsonAsync(new { status = "ready", tenantId = tenant.TenantId, home }, context.RequestAborted);
