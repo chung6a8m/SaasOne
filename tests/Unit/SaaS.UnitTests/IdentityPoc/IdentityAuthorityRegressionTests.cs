@@ -16,6 +16,9 @@ public sealed partial class M2IdentityPocTests
     public async Task Explicit_clock_is_shared_by_the_authority_in_every_shell()
     {
         await using var http = await IdentityHttpFixture.CreateAsync(fixture.Environment);
+        // Orchard initializes routing lazily on the first HTTP request; this direct
+        // DI contract test must explicitly load settings before requesting named scopes.
+        await http.Shells.InitializeAsync();
         foreach (var name in new[] { "Default", "alpha", "beta", "gamma", "delta" })
         {
             var scope = await http.Shells.GetScopeAsync(name);
