@@ -11,7 +11,33 @@ $previousSa = $env:MSSQL_SA_PASSWORD
 $previousConnection = $env:SAAS_M1_ADMIN_CONNECTION
 $started = $false
 $code = 1
-$report = [ordered]@{ scope = 'M2 PoC'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null; testExitCode = $null; cleanupExitCode = $null; total = 0; executed = 0; passed = 0; failed = 0; skipped = 0; mandatoryCases = @() }
+$required = @(
+    'Authorization_code_entrypoint_challenges_Default_with_Pkce',
+    'One_central_login_signs_into_Alpha_and_Beta_with_independent_cookies',
+    'Unknown_membership_cannot_authorize_Gamma',
+    'Same_email_never_links_different_issuer_subjects',
+    'Jwt_format_signature_issuer_audience_scope_and_expiry_are_validated',
+    'Alpha_access_token_cannot_call_Beta_even_with_both_memberships',
+    'Issuer_store_revocation_blocks_the_next_API_and_web_request',
+    'Refresh_is_bound_to_its_tenant_and_rotates_once',
+    'Refresh_reuse_revokes_only_its_family_and_related_session',
+    'Concurrent_refresh_cannot_leave_two_valid_chains',
+    'Lost_refresh_response_then_reuse_requires_new_login',
+    'Membership_remove_readd_never_revives_old_credentials',
+    'Suspend_reopen_and_expiry_extension_never_revive_old_credentials',
+    'Tenant_logout_preserves_other_tenants_and_global_logout_revokes_all',
+    'Required_source_failure_returns_dependency_unavailable_without_cached_allow',
+    'Restart_preserves_revocation_and_persisted_key_validation',
+    'Callback_logout_and_return_urls_are_strictly_allowlisted',
+    'Mutation_requires_antiforgery_and_two_tabs_keep_their_context'
+)
+$report = [ordered]@{
+    scope = 'M2 PoC'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null
+    command = 'dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter Category=SqlM2 --logger trx --results-directory artifacts/test-results/m2-poc'
+    testExitCode = $null; cleanupExitCode = $null; total = 0; executed = 0; passed = 0; failed = 0; skipped = 0
+    mandatoryCases = @($required | ForEach-Object { [ordered]@{ name = $_; discovered = 0; outcome = 'NotExecuted' } })
+    discoveredCases = @(); missingMandatoryCases = @($required)
+}
 Push-Location $root
 try {
     New-Item artifacts/verification -ItemType Directory -Force | Out-Null
@@ -25,6 +51,8 @@ try {
     if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::add-mask::$env:MSSQL_SA_PASSWORD" }
     & docker pull $image
     if ($LASTEXITCODE -ne 0) { throw 'BLOCKED: pinned SQL image unavailable.' }
+    $report.digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($report.digest)) { throw 'Cannot record image identity.' }
     & docker run --detach --name $name --env ACCEPT_EULA=Y --env MSSQL_PID=Developer --env MSSQL_SA_PASSWORD --publish '127.0.0.1::1433' $image | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'SQL instance failed to start.' }
     $started = $true
@@ -47,34 +75,23 @@ try {
     $counters = $trx.TestRun.ResultSummary.Counters
     foreach ($counter in @('total', 'executed', 'passed', 'failed')) { $report[$counter] = [int]$counters.$counter }
     $report.skipped = $report.total - $report.executed
-    if ($report.testExitCode -ne 0 -or $report.total -lt 1 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) { throw 'Every discovered M2 PoC case must execute and pass.' }
-    $required = @(
-        'Authorization_code_entrypoint_challenges_Default_with_Pkce',
-        'One_central_login_signs_into_Alpha_and_Beta_with_independent_cookies',
-        'Unknown_membership_cannot_authorize_Gamma',
-        'Same_email_never_links_different_issuer_subjects',
-        'Jwt_format_signature_issuer_audience_scope_and_expiry_are_validated',
-        'Alpha_access_token_cannot_call_Beta_even_with_both_memberships',
-        'Issuer_store_revocation_blocks_the_next_API_and_web_request',
-        'Refresh_is_bound_to_its_tenant_and_rotates_once',
-        'Refresh_reuse_revokes_only_its_family_and_related_session',
-        'Concurrent_refresh_cannot_leave_two_valid_chains',
-        'Lost_refresh_response_then_reuse_requires_new_login',
-        'Membership_remove_readd_never_revives_old_credentials',
-        'Suspend_reopen_and_expiry_extension_never_revive_old_credentials',
-        'Tenant_logout_preserves_other_tenants_and_global_logout_revokes_all',
-        'Required_source_failure_returns_dependency_unavailable_without_cached_allow',
-        'Restart_preserves_revocation_and_persisted_key_validation',
-        'Callback_logout_and_return_urls_are_strictly_allowlisted',
-        'Mutation_requires_antiforgery_and_two_tabs_keep_their_context'
-    )
-    foreach ($case in $required) {
-        $matches = @($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName.EndsWith('.' + $case, [StringComparison]::Ordinal) -and $_.outcome -eq 'Passed' })
-        if ($matches.Count -ne 1) { throw "BLOCKED: missing mandatory passing M2 PoC evidence: $case" }
+    $results = @($trx.TestRun.Results.UnitTestResult)
+    $report.discoveredCases = @($results | ForEach-Object { [ordered]@{ name = $_.testName; outcome = $_.outcome } })
+    $report.mandatoryCases = @($required | ForEach-Object {
+        $case = $_
+        $found = @($results | Where-Object { $_.testName -ceq ('SaaS.UnitTests.M2IdentityPocTests.' + $case) })
+        $outcome = if ($found.Count -eq 0) { 'Missing' } elseif ($found.Count -ne 1) { 'Duplicate' } else { [string]$found[0].outcome }
+        [ordered]@{ name = $case; discovered = $found.Count; outcome = $outcome }
+    })
+    $report.missingMandatoryCases = @($report.mandatoryCases | Where-Object { $_.discovered -eq 0 } | ForEach-Object { $_.name })
+    # Record the full missing/failed inventory BEFORE throwing. Passing native-store
+    # subtests must never masquerade as passing API/web/PKCE acceptance cases.
+    if ($report.testExitCode -ne 0 -or $report.total -lt 1 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) {
+        throw 'Every discovered M2 PoC case must execute and pass.'
     }
-    $report.mandatoryCases = $required
-    $report.digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot record image identity.' }
+    if (@($report.mandatoryCases | Where-Object { $_.outcome -cne 'Passed' }).Count -ne 0) {
+        throw 'BLOCKED: mandatory end-to-end M2 identity evidence is missing or invalid.'
+    }
     $code = 0
 } catch {
     Write-Host ('FAIL: ' + $_.Exception.Message)
