@@ -18,7 +18,29 @@ public sealed class TenancyModelTests
         using var tenant = Tenant();
         Assert.Equal("platform", platform.Model.GetDefaultSchema());
         Assert.Equal("tenancy", tenant.Model.GetDefaultSchema());
-        Assert.All(platform.Model.GetEntityTypes(), entity => Assert.Equal("platform", entity.GetSchema()));
+        var identityTypes = new HashSet<Type>
+        {
+            typeof(IdentityAccount), typeof(IdentitySubject), typeof(IdentityMembership),
+            typeof(IdentityTenantSecurity), typeof(IdentityClient), typeof(IdentitySession),
+            typeof(IdentityFamily), typeof(IdentityRefresh), typeof(IdentityInstallation)
+        };
+        var platformTypes = new HashSet<Type>
+        {
+            typeof(TenantRegistration), typeof(ProvisioningOperation), typeof(OperationalAudit), typeof(PlatformBootstrap)
+        };
+        // One EF owner now has two explicitly owned schemas. Do not accept arbitrary
+        // schemas/types, Orchard's dbo tables, or the customer's identity singleton.
+        Assert.Equal(identityTypes.Count + platformTypes.Count, platform.Model.GetEntityTypes().Count());
+        Assert.All(platform.Model.GetEntityTypes(), entity =>
+        {
+            Assert.True(identityTypes.Contains(entity.ClrType) || platformTypes.Contains(entity.ClrType));
+            Assert.Equal(identityTypes.Contains(entity.ClrType) ? "identity" : "platform", entity.GetSchema());
+        });
+        foreach (var type in identityTypes)
+        {
+            Assert.NotNull(platform.Model.FindEntityType(type));
+            Assert.Null(tenant.Model.FindEntityType(type));
+        }
         Assert.All(tenant.Model.GetEntityTypes(), entity => Assert.Equal("tenancy", entity.GetSchema()));
         Assert.Null(platform.Model.FindEntityType(typeof(TenantDatabaseIdentity)));
         Assert.Null(tenant.Model.FindEntityType(typeof(TenantRegistration)));
