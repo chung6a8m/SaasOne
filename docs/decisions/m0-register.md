@@ -10,7 +10,7 @@ Baseline: roadmap revision 1.3, `639a03253bc653758f2a028909cec9b163e0de73`. Owne
 | R04 | Closed bootstrap, distinct SQL principals and single schema ownership; ADR 0003 | Tenancy + operator | Documented | M1 real startup DDL rights, readiness and provisioning negative tests |
 | R05 | Durable write gate/drain/checkpoints, no direct toggle; ADR 0004 | Tenancy | Documented | M3 fixture races/crashes; M5 real Submit/Approve |
 | R06 | Atomic audit, Orders extension/revision/idempotency; ADR 0006 | Audit + Orders | Documented | M3 contract before consumer; M4/M5 rollback and duplicate-command proofs |
-| R07 | Exact toolchain, genuine locks, real SQL smoke, non-empty evidence | Build implementer | Implementation under verification | All roadmap §7.1 commands and suite counts on the final source SHA |
+| R07 | Exact toolchain, genuine locks, real SQL smoke, non-empty evidence | Build implementer | Technical gates PASS at `3770de522ef71b62e6cb9f5cf3bdd3212cc40b03`; owner review pending | Both CI jobs and artifacts verified; commands/counts in [M0 verification](../verification/m0.md). Rerun both gates after changes; this does not accept the ADR defaults |
 | R08 | Host composition; reusable platform/theme independent of business | Platform | Skeleton + negative fixtures | M0 actual graph; M1 feature graph; M7 second product publish graph |
 | R2-01 | Restored ACL not current; replace via current recovery authority; ADR 0005 | Security + operator | Documented | M3 fixture; M6 restore and new-login revocation proofs |
 | R2-02 | Preserve ApprovalRequired across reject/rework; ADR 0006 | Orders + Approvals | Documented | M3 guard fixture; M4 model; M5 both downgrade orderings |
