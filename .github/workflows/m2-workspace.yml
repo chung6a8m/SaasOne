@@ -1,0 +1,38 @@
+name: M2 offline build inputs
+on:
+  push:
+    branches: [feat/m2-identity-poc]
+    paths: [.github/workflows/m2-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  inputs:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Restore only public pinned dependencies
+        shell: bash
+        run: dotnet restore SaasOne.slnx --locked-mode
+      - name: Export exact SDK and public dependency inputs, never credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/inputs
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          (cd "$root"; tar -czf "$GITHUB_WORKSPACE/artifacts/inputs/dotnet.tar.gz" dotnet host/fxr/10.* sdk/10.0.403 shared/Microsoft.NETCore.App/10.* shared/Microsoft.AspNetCore.App/10.* packs/Microsoft.NETCore.App.Ref/10.* packs/Microsoft.AspNetCore.App.Ref/10.* packs/Microsoft.NETCore.App.Host.linux-x64/10.* packs/NETStandard.Library.Ref)
+          tar -czf artifacts/inputs/packages.tar.gz -C "$HOME/.nuget/packages" .
+          tar -czf artifacts/inputs/pwsh.tar.gz -C "$RUNNER_TEMP/pwsh" .
+          curl -fsSL https://github.com/OrchardCMS/OrchardCore/archive/refs/tags/v3.0.1.tar.gz -o artifacts/inputs/orchard-v3.0.1.tar.gz
+          git rev-parse HEAD > artifacts/inputs/commit.txt
+          (cd artifacts/inputs; sha256sum *.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m2-offline-build-inputs
+          path: artifacts/inputs
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
