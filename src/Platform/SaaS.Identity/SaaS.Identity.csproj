@@ -3,6 +3,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../SaaS.Abstractions/SaaS.Abstractions.csproj" />
     <ProjectReference Include="../SaaS.Tenancy/SaaS.Tenancy.csproj" />
+    <PackageReference Include="OrchardCore.Infrastructure" />
     <PackageReference Include="OrchardCore.OpenId" />
     <PackageReference Include="OrchardCore.Users" />
     <PackageReference Include="OrchardCore.Roles" />

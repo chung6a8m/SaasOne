@@ -122,7 +122,8 @@ public static class IdentityRegistration
                     };
                 });
             }
-            tenant.AddOptions<OpenIdConnectOptions>(IdentityNames.Oidc).PostConfigure<ShellSettings, IDataProtectionProvider>((options, shell, protection) =>
+            // Configure before the framework's post-configurer builds discovery/backchannel services.
+            tenant.AddOptions<OpenIdConnectOptions>(IdentityNames.Oidc).Configure<ShellSettings, IDataProtectionProvider>((options, shell, protection) =>
             {
                 if (shell.Name == "Default") return;
                 var id = Guid.Parse(shell["SaaS:TenantId"]);
@@ -174,11 +175,14 @@ public static class IdentityRegistration
                 options.Events.OnRemoteFailure = async context =>
                 {
                     context.HandleResponse();
-                    await IdentityProtocol.WriteErrorAsync(context.HttpContext, 401, "oidc_callback_invalid");
+                    var cause = context.Failure?.GetBaseException();
+                    if (cause is IdentityDeniedException denied) await IdentityProtocol.WriteErrorAsync(context.HttpContext, denied.StatusCode, denied.Code);
+                    else if (cause is HttpRequestException or System.Data.Common.DbException)
+                        await IdentityProtocol.WriteErrorAsync(context.HttpContext, 503, "identity_dependency_unavailable");
+                    else await IdentityProtocol.WriteErrorAsync(context.HttpContext, 401, "oidc_callback_invalid");
                 };
             });
         });
-        // Before native authentication: the family lock must also cover native token redemption.
         orchard.Configure(app => app.Use(IdentityProtocol.BeforeAuthenticationAsync), order: int.MinValue + 100);
         orchard.Configure(app => app.Run(IdentityEndpoints.HandleAsync), order: int.MaxValue - 100);
     }

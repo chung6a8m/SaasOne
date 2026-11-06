@@ -11,7 +11,9 @@ public sealed partial class M2IdentityPocTests(M1SqlFixture fixture) : IClassFix
     [Fact]
     public async Task Authorization_code_entrypoint_challenges_Default_with_Pkce()
     {
-        using var response = await fixture.Client.GetAsync("/alpha/account/login", TestContext.Current.CancellationToken);
+        await using var http = await IdentityHttpFixture.CreateAsync(fixture.Environment);
+        using var client = http.NewClient();
+        using var response = await client.GetAsync("/alpha/account/login", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         var destination = Assert.IsType<Uri>(response.Headers.Location);
         Assert.Equal("/connect/authorize", destination.AbsolutePath);
