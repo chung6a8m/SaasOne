@@ -20,11 +20,19 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/pinned-toolchain
       - name: Locked build, behavioral tests and architecture
-        shell: pwsh
-        run: ./scripts/check.ps1 -Scope M0
+        shell: bash
+        run: |
+          mkdir -p artifacts/logs
+          pwsh -NoProfile -File scripts/check.ps1 -Scope M0 > artifacts/logs/foundation.log 2>&1 || { tail -100 artifacts/logs/foundation.log; exit 1; }
+          tail -25 artifacts/logs/foundation.log
       - name: Real SQL baseline
         shell: pwsh
         run: ./scripts/sql-fixture.ps1
+      - name: M1 real SQL and Orchard acceptance
+        shell: bash
+        run: |
+          pwsh -NoProfile -File scripts/m1-sql-fixture.ps1 > artifacts/logs/m1-sql.log 2>&1 || { tail -120 artifacts/logs/m1-sql.log; exit 1; }
+          tail -35 artifacts/logs/m1-sql.log
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
@@ -32,4 +40,5 @@ jobs:
           path: |
             artifacts/verification
             artifacts/test-results
+            artifacts/logs
           if-no-files-found: error
