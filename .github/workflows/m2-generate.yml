@@ -12,29 +12,43 @@ jobs:
   generate:
     if: github.ref == 'refs/heads/feat/m2-identity-poc'
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: feat/m2-identity-poc
           persist-credentials: true
       - uses: ./.github/actions/pinned-toolchain
-      - name: Generate only owned lock and EF inputs
+      - name: Generate only owned lock, inventory and EF inputs
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           dotnet tool restore
           dotnet restore SaasOne.slnx --force-evaluate
-          dotnet build src/Platform/SaaS.Tenancy/SaaS.Tenancy.csproj -c Release --no-restore
+          dotnet build SaasOne.slnx -c Release --no-restore
           if ! find src/Platform/SaaS.Tenancy/Migrations/Platform -name '*_IdentityAuthority.cs' | grep -q .; then
             dotnet ef migrations add IdentityAuthority --project src/Platform/SaaS.Tenancy --context PlatformDbContext --output-dir Migrations/Platform --configuration Release --no-build
           fi
-          git add -- '**/packages.lock.json' src/Platform/SaaS.Tenancy/Migrations/Platform
-          if git diff --cached --quiet; then exit 0; fi
+          dotnet tools/SaaS.Build/bin/Release/net10.0/SaaS.Build.dll locks-write "$PWD"
+          git add -- '**/packages.lock.json' src/Platform/SaaS.Tenancy/Migrations/Platform docs/compatibility/resolved-packages.json
           git diff --cached --name-only | while IFS= read -r path; do
-            case "$path" in */packages.lock.json|src/Platform/SaaS.Tenancy/Migrations/Platform/*.cs) ;; *) echo 'Unexpected generated path'; exit 1;; esac
+            case "$path" in */packages.lock.json|src/Platform/SaaS.Tenancy/Migrations/Platform/*.cs|docs/compatibility/resolved-packages.json) ;; *) echo 'Unexpected generated path'; exit 1;; esac
           done
-          git config user.name 'SaasOne build'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'build(M2): generate pinned native identity locks and owned platform migration'
-          git push origin HEAD:refs/heads/feat/m2-identity-poc
+          if ! git diff --cached --quiet; then
+            git config user.name 'SaasOne build'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'build(M2): retain exact native identity dependency inventory'
+            git push origin HEAD:refs/heads/feat/m2-identity-poc
+          fi
+      - name: Complete verification on the generated source SHA
+        shell: pwsh
+        run: ./scripts/check-m2.ps1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m2-generated-input-verification-${{ github.run_id }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          if-no-files-found: error
