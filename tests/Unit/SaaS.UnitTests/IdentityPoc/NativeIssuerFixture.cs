@@ -49,9 +49,32 @@ internal sealed class NativeIssuerFixture : IAsyncDisposable
                 });
             }
         }
-        fixture._application = fixture.Build(fixture.Settings(maintenance: false));
+        var runtime = fixture.Settings(maintenance: false);
+        await fixture.GrantRuntimeAccessAsync(runtime);
+        fixture._application = fixture.Build(runtime);
         await fixture.Shells.InitializeAsync();
         return fixture;
+    }
+
+    private async Task GrantRuntimeAccessAsync(ShellSettings[] runtime)
+    {
+        foreach (var selected in runtime)
+        {
+            var admin = selected.Name == "Default" ? _environment.PlatformAdmin :
+                _environment.CustomerAdmin(_environment.Tenants.Single(tenant => tenant.Slug == selected.Name));
+            var principal = new SqlConnectionStringBuilder(selected["ConnectionString"]).UserID;
+            await using var connection = await SqlOperations.OpenAsync(admin, CancellationToken.None);
+            // The M1 runtime grant is an explicit table allowlist. New native PoC tables
+            // need their own DML grants; never grant schema-wide DML, DDL or db_owner.
+            await SqlOperations.ExecuteAsync(connection, """
+                DECLARE @sql nvarchar(max);
+                SELECT @sql = STRING_AGG(CONVERT(nvarchar(max),
+                    N'GRANT SELECT, INSERT, UPDATE, DELETE ON OBJECT::' + QUOTENAME(SCHEMA_NAME(schema_id)) + N'.' + QUOTENAME(name) + N' TO ' + QUOTENAME(@principal) + N';'), CHAR(10))
+                FROM sys.tables WHERE SCHEMA_NAME(schema_id) = N'dbo' AND LEFT(name, LEN(@prefix)) = @prefix;
+                IF @sql IS NULL THROW 51000, 'Native PoC tables were not created', 1;
+                EXEC sys.sp_executesql @sql;
+                """, CancellationToken.None, ("@principal", principal), ("@prefix", _prefix + "_"));
+        }
     }
 
     private ShellSettings[] Settings(bool maintenance)
@@ -148,7 +171,7 @@ internal sealed class NativeIssuerFixture : IAsyncDisposable
         await using var connection = await SqlOperations.OpenAsync(_environment.PlatformAdmin, CancellationToken.None);
         // Both identifiers are locally generated/fixed, never a request or token value.
         await SqlOperations.ExecuteAsync(connection,
-            $"{(fail ? "DENY" : "REVOKE")} SELECT ON OBJECT::[dbo].[{_prefix}_Document] {(fail ? "TO" : "FROM")} [saas_platform_runtime]", CancellationToken.None);
+            $"{(fail ? "DENY" : "GRANT")} SELECT ON OBJECT::[dbo].[{_prefix}_Document] TO [saas_platform_runtime]", CancellationToken.None);
     }
 
     public async Task RestartAsync()
