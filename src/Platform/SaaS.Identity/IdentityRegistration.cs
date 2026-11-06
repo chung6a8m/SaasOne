@@ -27,8 +27,9 @@ public static class IdentityRegistration
         services.TryAddSingleton<TenancyConnections>();
         services.AddHttpContextAccessor();
         var orchard = services.AddOrchardCore();
-        orchard.ConfigureServices(tenant =>
+        orchard.ConfigureServices((tenant, preliminary) =>
         {
+            var configuredShell = preliminary.GetRequiredService<ShellSettings>();
             tenant.AddScoped<IdentityAuthority>();
             tenant.AddScoped<DefaultIssuerStore>();
             tenant.AddScoped<RefreshRotation>();
@@ -71,7 +72,10 @@ public static class IdentityRegistration
                 options.FormFieldName = "__RequestVerificationToken";
                 options.HeaderName = "X-CSRF-TOKEN";
             });
-            tenant.AddAuthentication().AddCookie(IdentityNames.TenantCookie).AddOpenIdConnect(IdentityNames.Oidc, _ => { });
+            // Default is the native server, never a second OIDC client. Customer
+            // request handlers are registered only in the customer service container.
+            if (configuredShell.Name != "Default")
+                tenant.AddAuthentication().AddCookie(IdentityNames.TenantCookie).AddOpenIdConnect(IdentityNames.Oidc, _ => { });
             tenant.AddOptions<AuthenticationOptions>().PostConfigure<ShellSettings>((options, shell) =>
             {
                 var scheme = shell.Name == "Default" ? IdentityConstants.ApplicationScheme : IdentityNames.TenantCookie;
@@ -122,7 +126,6 @@ public static class IdentityRegistration
                     };
                 });
             }
-            // Configure before the framework's post-configurer builds discovery/backchannel services.
             tenant.AddOptions<OpenIdConnectOptions>(IdentityNames.Oidc).Configure<ShellSettings, IDataProtectionProvider>((options, shell, protection) =>
             {
                 if (shell.Name == "Default") return;
