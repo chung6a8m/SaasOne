@@ -65,8 +65,8 @@ internal sealed class M1SqlEnvironment : IDisposable
     }
     private string Credential(string database, string user)
     {
-        var credential = string.Concat(Guid.NewGuid().ToString("N"), "Aa1!");
-        var sql = new SqlConnectionStringBuilder(_admin) { InitialCatalog = database, UserID = user, Password = credential, Pooling = false };
+        var sql = new SqlConnectionStringBuilder(_admin) { InitialCatalog = database, UserID = user, Pooling = false };
+        sql[nameof(SqlConnectionStringBuilder.Password)] = string.Concat(Guid.NewGuid().ToString("N"), "Aa1!");
         return sql.ConnectionString;
     }
     private static string Key(TestTenant tenant, string role) => $"SAAS_TENANT_{tenant.Id:N}_{role}".ToUpperInvariant();
