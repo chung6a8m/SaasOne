@@ -6,7 +6,7 @@ namespace SaaS.UnitTests;
 
 [Collection("M1 SQL")]
 [Trait("Category", "SqlM2")]
-public sealed class M2IdentityPocTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixture>
+public sealed partial class M2IdentityPocTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixture>
 {
     [Fact]
     public async Task Authorization_code_entrypoint_challenges_Default_with_Pkce()
