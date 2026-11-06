@@ -43,8 +43,12 @@ public static class FeatureGraph
             Dependencies = node.Dependencies.Concat(native.Values.Where(feature => feature.ExtensionId.Equals(node.Id, StringComparison.OrdinalIgnoreCase))
                 .Select(feature => "feature:" + feature.Id)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
         }).ToList();
+        // A native edge also loads the target feature's owning assembly and its project/package dependencies.
+        // Copy ORIGINAL owner dependencies, not the expanded owner node: a direct feature -> owner edge
+        // would create an artificial owner -> feature -> owner cycle (including same-owner feature chains).
         graph.AddRange(native.Values.Select(feature => new DependencyNode("feature:" + feature.Id, owners[feature.ExtensionId].Layer,
-            feature.Dependencies.Select(dependency => "feature:" + dependency).Distinct(StringComparer.OrdinalIgnoreCase).ToArray())));
+            feature.Dependencies.Select(dependency => "feature:" + dependency)
+                .Concat(owners[feature.ExtensionId].Dependencies).Distinct(StringComparer.OrdinalIgnoreCase).ToArray())));
         graph.AddRange(unavailable.Select(id => new DependencyNode("feature:" + id, "UnavailableNativeFeature", [])));
         return graph;
     }

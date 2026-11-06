@@ -20,7 +20,17 @@ Inject secrets with the deployment secret manager into the appropriate process e
 | `SAAS_TENANT_{TENANT_ID_N_UPPER}_RUNTIME` | HTTP process; same customer database, login `saas_rt_{tenantId:N}`; read-only `tenancy` schema, DML only on reviewed Orchard tables, no cross-database or DDL privileges. |
 | `SAAS_OPERATIONS_HOME` | Private maintenance only; durable local path owned by the operations OS identity. Unix directory permissions are restricted to its owner. |
 
-SQL authentication is the implemented role adapter. The secret manager must persist the same credentials across retry; an existing SQL login is authenticated, never reset/reassigned automatically. Use encrypted SQL transport with certificate validation in production. CI alone uses a trusted ephemeral loopback fixture certificate. The HTTP process must not receive provisioner, operator, migrator or operations-home secrets. The acceptance suite starts separate runtime processes with only runtime connections to enforce this boundary.
+SQL authentication is the implemented role adapter. The secret manager must persist the same credentials across retry; an existing SQL login is authenticated, never reset/reassigned automatically. Use encrypted SQL transport with certificate validation in production. CI alone uses a trusted ephemeral loopback fixture certificate. The HTTP process must not receive provisioner, operator, migrator or operations-home secrets. The acceptance suite starts separate runtime processes with only runtime connections to enforce this credential boundary; it does not certify separate CI OS accounts.
+
+### Environment-only delivery and newly provisioned tenants
+
+M1 reads the current process environment, not a live secret-manager API. Changing the CLI/parent/service configuration after HTTP startup does not update the running HTTP process. See [.NET process-environment semantics](https://learn.microsoft.com/en-us/dotnet/api/system.environment.getenvironmentvariable?view=net-10.0#remarks).
+
+For no-restart registration, allocate the future TenantId and persist its credentials first, inject that tenant's runtime secret into the HTTP environment BEFORE starting the HTTP process, and then provision using the separate maintenance process. Once provisioning completes, verified shell reload can register the tenant in that already-running HTTP process. The runtime receives only runtime credentials, even for the preallocated tenant.
+
+When a new runtime secret was not present at HTTP startup, provision may complete but that HTTP process must keep the new tenant closed. Update the deployment's runtime-only environment from the secret manager and perform a controlled HTTP process restart/container recreation before readiness can pass. Existing healthy tenants remain available until that planned restart. This also applies to environment-only credential rotation/correction; M1 does not implement dynamic cross-process secret delivery or zero-downtime rollout. Do not give maintenance credentials to HTTP or edit a process's environment through a public endpoint to avoid the restart.
+
+The process acceptance cases launch HTTP first, provision through a separate CLI child, and test both preloaded-secret success and late-secret 503 followed by readiness after restart. An in-process environment mutation is not evidence for deployment secret propagation.
 
 ## Build and bootstrap once
 
@@ -43,7 +53,7 @@ Bootstrap creates the fixed platform database, applies only the platform-owned E
 
 ## Provision or retry
 
-Allocate and persist one TenantId and one OperationId before starting. Preserve the full request tuple, including the exact expiry, across every retry.
+Allocate and persist one TenantId and one OperationId before starting. Preserve the full request tuple, including the exact expiry, across every retry. Follow the environment-delivery procedure above for the HTTP process separately from maintenance credentials.
 
 ```powershell
 ./scripts/tenant-provision.ps1 `
@@ -71,6 +81,8 @@ Maintenance output contains safe error codes, exception type, SQL error number a
 
 `GET /health/live` proves only process liveness. `GET /health/ready` proves the fixed platform baseline. Customer readiness is `GET /{slug}/health/ready`; `GET /{slug}/` is a minimal read-only foundation page with tenant-prefixed links. Operational or baseline failures return a generic 503 without database details. Unknown tenant routes return a controlled error, never customer business through Default.
 
+A customer registration/secret contract error is isolated while loading the native shell inventory: that customer stays closed, while valid customers and Default can initialize. Suspended/expired/incomplete tenants are not loaded. A named shell reload validates only the requested customer, not unrelated customer secrets. Platform connection, bootstrap and platform-query failures are NOT swallowed and keep all readiness closed. Correcting an environment-delivered secret still follows the controlled restart rule above.
+
 The outer boundary checks fresh registry/lifecycle, identity, EF history, seed, native Orchard descriptor/migration and least-privilege SQL health before passing to Orchard. The inner boundary confirms the actual Orchard-selected shell, prefix, TenantContext and customer connection. No header, token, query or body field can select the customer database. All responses are non-cacheable; shared application cache keys use immutable TenantId and length-framed components.
 
 Setup, admin, feature, template, recipe and upload HTTP surfaces are closed even before bootstrap. The reviewed typed recipe `SaaS.Foundation.M1.v1` enables only the application/default feature and `SaaS.Theme.App`; it accepts no scripts or arbitrary feature list. The JSON in `src/SaaS.Web/Recipes` documents this profile, not an executable customer-provided recipe.
@@ -79,7 +91,7 @@ Setup, admin, feature, template, recipe and upload HTTP surfaces are closed even
 
 Tenancy alone owns `platform` and `tenancy` EF histories and migrations. Orchard owns `dbo.oc_*` and its native migration record. Runtime code never invokes EF migrations. The identity trigger rejects UPDATE/DELETE even through the migrator; runtime SQL permissions also reject INSERT/UPDATE/DELETE on the identity schema.
 
-The architecture gate combines restored project/package references with actual compiled Orchard feature metadata, including BaseTheme. Direct/transitive platform/theme-to-business edges fail. Missing first-party feature references fail. Dormant third-party OpenID feature dependencies absent from the selective M0 package set are recorded as `UnavailableNativeFeature`; none may be reachable from the enabled M1 profile. Enabling identity remains the M2 PoC/ADR gate, not an implicit M1 dependency upgrade.
+The architecture gate combines restored project/package references with actual compiled Orchard feature metadata, including BaseTheme and each feature owner's project/package dependencies. Direct, transitive and mixed feature→package paths from platform/theme to business fail; Orders→Approvals is likewise prohibited. Same-owner native feature dependencies must not create artificial ownership cycles. Missing first-party feature references fail. Dormant third-party OpenID feature dependencies absent from the selective M0 package set are recorded as `UnavailableNativeFeature`; none may be reachable from the enabled M1 profile. Enabling identity remains the M2 PoC/ADR gate, not an implicit M1 dependency upgrade.
 
 ## Acceptance commands and evidence
 
@@ -89,6 +101,6 @@ pwsh -NoProfile -File scripts/sql-fixture.ps1
 pwsh -NoProfile -File scripts/m1-sql-fixture.ps1
 ```
 
-The last two commands create isolated Docker SQL Server fixtures and must not be pointed at a deployment. The M1 fixture fails if SQL is unavailable, tests are not discovered/executed, a mandatory case fails/skips, or cleanup fails. It retains source SHA, pinned image/digest, command exit status and TRX counters in `artifacts/verification/m1-sql.json`; CI uploads the full evidence and redacted logs. A build or liveness response alone is not M1 acceptance.
+The last two commands create isolated Docker SQL Server fixtures and must not be pointed at a deployment. The M1 fixture requires at least 48 executed passing SQL cases, including six cold-process secret/lifecycle combinations and named process/restart regressions. It fails if SQL is unavailable, tests are not discovered/executed, a mandatory case fails/skips, or cleanup fails. It retains source SHA, pinned image/digest, command exit status and TRX counters in `artifacts/verification/m1-sql.json`; CI uploads the full evidence and redacted logs. A build or liveness response alone is not M1 acceptance.
 
 Owner review of security, migration ownership, the single-operations-host constraint and failure reconciliation is required before merge. No production tenant or database is created by opening the PR.

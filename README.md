@@ -37,7 +37,7 @@ Both require Docker, bind to loopback, create fresh containers from the pinned S
 
 The M0 fixture proves exact provider/engine/version/database/privilege connectivity, including a wrong-target negative probe. Its expected database is `saas_m0_smoke`. For an operator-prepared matching test instance, inject `SAAS_SQL_SMOKE_CONNECTION` from a secret manager and run `scripts/check.ps1 -Scope SqlSmoke`; never paste credentials into commands or Git.
 
-The M1 fixture proves private platform bootstrap, four real customer databases, actual Orchard routing, idempotent retry, concurrent/stale operation rejection, lifecycle preservation, immutable identity, missing/corrupt baseline rejection, forbidden cross-database/DDL access and fresh runtime-only process restarts. It requires at least 38 executed passing cases, validates named mandatory cases, and writes `artifacts/verification/m1-sql.json` plus TRX evidence. A missing SQL prerequisite, skipped test, failed assertion or cleanup failure cannot produce PASS.
+The M1 fixture covers private platform bootstrap, four real customer databases, actual Orchard routing, idempotent retry, concurrent/stale operation rejection, lifecycle preservation, immutable identity, missing/corrupt baseline rejection, forbidden cross-database/DDL access and fresh runtime-only process restarts. It requires at least 48 executed passing cases, validates named mandatory cases including six cold-process isolation combinations, and writes `artifacts/verification/m1-sql.json` plus TRX evidence. Separate HTTP/maintenance process tests distinguish preloaded-secret registration from late-secret delivery requiring restart. A missing SQL prerequisite, skipped test, failed assertion or cleanup failure cannot produce PASS.
 
 ## Provisioning and runtime
 
@@ -51,7 +51,9 @@ Read the [M1 runbook](docs/runbooks/m1-tenancy-provisioning.md) before injecting
 
 Retry uses the same complete request tuple. The supported M1 coordinator uses one trusted operations machine, a durable local process lock, a non-expiring SQL session lock and prior-owner SQL-session reconciliation. Cross-host takeover and unidentified existing databases are blocked, not automatically adopted. Owner review of these constraints is required before deployment.
 
-`GET /health/live` proves process liveness only. After private provisioning, `GET /health/ready` checks the platform baseline, `GET /{slug}/health/ready` checks the selected customer's readiness, and `GET /{slug}/` serves a minimal tenant-prefixed foundation page. Setup, admin, feature, template, recipe and upload HTTP surfaces remain closed. Unknown/unready tenants never fall through to Default customer business data. Newly completed tenants can be loaded without restarting the host.
+`GET /health/live` proves process liveness only. After private provisioning, `GET /health/ready` checks the platform baseline, `GET /{slug}/health/ready` checks the selected customer's readiness, and `GET /{slug}/` serves a minimal tenant-prefixed foundation page. Setup, admin, feature, template, recipe and upload HTTP surfaces remain closed. Unknown/unready tenants never fall through to Default customer business data. A customer's invalid registration or runtime secret does not prevent valid tenants/Default from loading; platform failures still close all readiness.
+
+**Secret delivery is environment-only.** A newly completed tenant can be registered without restarting HTTP only when its runtime secret was injected BEFORE that HTTP process started. A secret added later to the maintenance/parent environment is not available in the running HTTP process: update its runtime-only deployment environment and perform a controlled restart/container recreation. M1 does not claim dynamic secret delivery or zero-downtime provisioning. See the runbook for the two supported sequences.
 
 `Standard` and `Approval` currently share the reviewed foundation profile. M1 records the selected plan but does not fake business modules scheduled for later milestones. TenantContext, customer connection, prefixed links and cache partition derive from the actual routed shell, not request-supplied tenant identifiers.
 
@@ -69,7 +71,7 @@ Retry uses the same complete request tuple. The supported M1 coordinator uses on
 | `tests/Unit`, `tests/Architecture` | Behavioral, real SQL, native-feature, dependency and evidence tests |
 | `docs/verification`, `docs/runbooks` | Source-bound verification records and private operational procedures |
 
-Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility matrix](docs/compatibility/m0-matrix.md), [M0 decision register](docs/decisions/m0-register.md), [M0 evidence](docs/verification/m0.md) and [M1 evidence](docs/verification/m1.md). Platform/theme must not depend directly or transitively on business modules. Tenancy owns the `platform` and `tenancy` EF streams; Orchard owns its native tables/migration record. Runtime never applies EF migrations.
+Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility matrix](docs/compatibility/m0-matrix.md), [M0 decision register](docs/decisions/m0-register.md), [M0 evidence](docs/verification/m0.md) and [M1 evidence](docs/verification/m1.md). Platform/theme must not depend directly or transitively on business modules, including mixed feature-to-package paths. Tenancy owns the `platform` and `tenancy` EF streams; Orchard owns its native tables/migration record. Runtime never applies EF migrations.
 
 ## CI and dependency maintenance
 
