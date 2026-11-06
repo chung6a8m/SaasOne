@@ -1,0 +1,39 @@
+name: M1 initial migration generation
+on:
+  push:
+    branches: [feat/m1-tenancy-provisioning]
+    paths: [scripts/generate-m1-migrations.ps1, .github/workflows/m1-generate.yml]
+permissions:
+  contents: write
+jobs:
+  generate:
+    if: github.repository == 'chung6a8m/SaasOne' && github.ref == 'refs/heads/feat/m1-tenancy-provisioning'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Generate and validate owned provider migrations
+        shell: pwsh
+        run: ./scripts/generate-m1-migrations.ps1
+      - name: Commit generated migrations to this isolated implementation branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/Platform/SaaS.Tenancy/Migrations
+          git diff --cached --check
+          git commit -m 'build(M1): generate SQL Server baselines and owned identity trigger'
+          git push origin HEAD:refs/heads/feat/m1-tenancy-provisioning
+      - name: Verify generated source
+        shell: pwsh
+        run: ./scripts/check.ps1 -Scope M0
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m1-generated-verification-${{ github.sha }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          if-no-files-found: warn

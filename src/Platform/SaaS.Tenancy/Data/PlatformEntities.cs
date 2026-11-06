@@ -29,6 +29,7 @@ public sealed class ProvisioningOperation
     public string RequestHash { get; set; } = string.Empty;
     public ProvisioningCheckpoint Checkpoint { get; set; }
     public Guid? OwnerId { get; set; }
+    public string? OwnerHost { get; set; }
     public long Fence { get; set; }
     public bool Failed { get; set; }
     public string? ErrorCode { get; set; }
@@ -53,4 +54,5 @@ public sealed class PlatformBootstrap
     public Guid InstallationId { get; set; }
     public bool Completed { get; set; }
     public int BaselineVersion { get; set; }
+    public string OperationHost { get; set; } = string.Empty;
 }
