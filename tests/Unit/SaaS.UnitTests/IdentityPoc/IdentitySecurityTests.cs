@@ -37,7 +37,7 @@ public sealed partial class M2IdentityPocTests
         Assert.NotEqual(secondId, thirdId);
         Assert.Equal(secondId, await http.Operations.EnrollSubjectAsync(otherIssuer.Issuer, otherIssuer.Subject, TestContext.Current.CancellationToken));
         await using var db = TenancyConnections.PlatformContext(fixture.Environment.PlatformAdmin);
-        Assert.False(await db.IdentityMemberships.AnyAsync(x => x.GlobalUserId == secondId || x.GlobalUserId == thirdId));
+        Assert.False(await db.IdentityMemberships.AnyAsync(x => x.GlobalUserId == secondId || x.GlobalUserId == thirdId, TestContext.Current.CancellationToken));
         using var browser = http.NewBrowser();
         await browser.LoginAsync(http);
         using var page = await browser.FollowAsync("/alpha/account/login");

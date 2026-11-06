@@ -65,8 +65,8 @@ public sealed partial class M2IdentityPocTests
             HttpBrowser.RefreshAsync(http, "alpha", alpha.RefreshToken));
         try
         {
-            Assert.Single(responses.Where(x => x.StatusCode == HttpStatusCode.OK));
-            Assert.Single(responses.Where(x => x.StatusCode == HttpStatusCode.BadRequest));
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.OK);
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.BadRequest);
             var winner = await HttpBrowser.TokensAsync(responses.Single(x => x.StatusCode == HttpStatusCode.OK));
             await HttpBrowser.AssertOAuthErrorAsync(responses.Single(x => x.StatusCode == HttpStatusCode.BadRequest), "invalid_grant");
             // One successful response may precede reuse, but neither old nor child
