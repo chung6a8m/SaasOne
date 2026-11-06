@@ -1,0 +1,18 @@
+# ADR 0004 — Lifecycle, operation ownership and plan transition
+
+Status: Proposed for owner review; protocol mandated by reviewed roadmap. Owners: tenancy implementer (M1/M3), operator/release implementer (M6). Scope: R05, R3-02; roadmap §5.1–5.2, §5.5.
+
+Subscription (Active/Suspended/PendingDeletion, ExpiresAt) and operation state (Provisioning/PlanChanging/Restoring/Migrating/recovery/failure) are separate. TenantOperational requires current Active, unexpired, all operation/security gates clear and readiness. Finishing an operation clears only its own gate, never unsuspends, cancels deletion or extends expiry.
+
+A common platform RegistryVersion per TenantId covers subscription, expiry, plan/entitlement, security generation and operation ownership/state/fencing. Every writer checks/increments it in a short platform transaction with audit, including CLI/recovery. It is distinct from order revision and tenant write-gate version. Provision, plan change, migration/release, restore and purge share one resource-change coordinator, not independent locks. Operation ID, owner/fence and checkpoints persist across crashes. Primitive SQL, timeout and non-interruptible-step handling are fixed in the owning milestone plan before implementation.
+
+Suspend/PendingDeletion commits independently while a long operation holds the resource lock; it does not release that lock. A worker completes or isolates a non-interruptible step safely, then stops before using stale state. Purge must prove earlier resource-mutating workers cannot still write; an expired lease or incremented fence alone is insufficient. A platform tombstone prevents stale-worker resurrection after purge.
+
+## Plan-change protocol
+1. Authorize and CAS the registry into PlanChanging, preserving subscription. Block new business requests. Every business write holds a compatible lock on Tenancy's durable customer write gate inside its own transaction until commit/rollback.
+2. Close the gate with a conflicting lock and drain in-flight transactions. Timeout leaves platform closed; do not claim the gate closed before its transaction commits. A preauthorized request waiting to write cannot bypass the closed or newer-version gate.
+3. With the durable gate closed, check obligations: `ApprovalRequired && Status != Confirmed`, including Rejected and rework Draft, via a host-composed abstraction. Unknown data/reader failure is closed. Outstanding obligations reject downgrade without changing feature/entitlement; reconcile the old plan then end only this operation, subject to current lifecycle, so valid users can finish approval.
+4. Otherwise migrate before enabling features; checkpoint feature/profile and entitlement changes. Failures stay closed, never reopen in finally. Direct feature toggles through Orchard/CLI/API/recipes are prohibited or routed through this protocol.
+5. Reconcile schema/features/plan and new gate version while platform remains closed. Final/resume CAS includes TenantId + operation ID + owner/fence + reconciled RegistryVersion and rechecks lifecycle/expiry/readiness. Version conflict is a reconciliation event, not permission to load a new version and overwrite Active. Worker takeover fences stale workers and maintains actual exclusivity for feature APIs without conditional writes.
+
+No distributed transaction is assumed. Feature disable never deletes schema/history. M3 fixtures prove timeout/crash/restart/stale worker, Suspend/PendingDeletion immediately before reopen, expiry mid-operation and unsuspend during recovery; M5 repeats with real Submit/Approve, M6 with restore/release. M1 establishes the same ownership contract for provisioning rather than a competing mechanism.

@@ -14,7 +14,10 @@ public static class ConfigHygiene
             || new[] { ".pfx", ".p12", ".key" }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)
             || normalized.Contains("/App_Data/", StringComparison.OrdinalIgnoreCase)) errors.Add("Sensitive file must not be tracked.");
         if (Regex.IsMatch(content, @"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")) errors.Add("Private key material.");
-        if (Regex.IsMatch(content, "(?i)(?:password|pwd)\\s*=\\s*[^\\s;\\\"'$<{][^;\\r\\n]*")) errors.Add("Literal credential assignment.");
+        // Recognize bare/quoted/SQL-Unicode literals, but not environment interpolation.
+        // The whitespace guard prevents backtracking past the variable-reference exclusion.
+        const string assignment = """(?i)\b(?:password|pwd)[ \t]*=[ \t]*(?![ \t]|N?['"]?\$)(?:N?['"])?[^ \t\r\n;"'$<{][^;"'\r\n]*""";
+        if (Regex.IsMatch(content, assignment)) errors.Add("Literal credential assignment.");
         if (Regex.IsMatch(content, @"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b")) errors.Add("Access token material.");
         return errors;
     }
