@@ -73,7 +73,7 @@ internal sealed class FoundationObligationReader : IApprovalObligationReader
         await using var audit = AuditDbContext.Open(connection);
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
-            "dbo.oc_Document", "dbo.oc_Identifier", "dbo.oc_SaaSFoundation",
+            "dbo.oc_Document", "dbo.oc_Identifiers", "dbo.oc_SaaSFoundation",
             "tenancy.__EFMigrationsHistory", "access.__EFMigrationsHistory", "audit.__EFMigrationsHistory"
         };
         foreach (var db in new DbContext[] { tenancy, access, audit })
