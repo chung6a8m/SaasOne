@@ -35,9 +35,9 @@ public sealed partial class M3RuntimeTests
         Assert.True(await platform.IdentityAccounts.AnyAsync(x => x.Id == user && x.Enabled, Ct));
         Assert.True(await platform.IdentityMemberships.AnyAsync(x => x.TenantId == beta.Id && x.GlobalUserId == user && x.Active, Ct));
         await using var server = await SqlOperations.OpenAsync(Environment.Admin, Ct);
-        Assert.IsType<DBNull>(await SqlOperations.ScalarAsync(server, "SELECT DB_ID(@name)", Ct, ("@name", current.DatabaseName)));
-        Assert.IsType<int>(await SqlOperations.ScalarAsync(server, "SELECT DB_ID(@name)", Ct, ("@name", TenancyConnections.TenantDatabase(beta.Id))));
-        Assert.IsType<int>(await SqlOperations.ScalarAsync(server, "SELECT DB_ID('saas_platform')", Ct));
+        Assert.IsType<DBNull>(await SqlOperations.ScalarAsync(server, "SELECT CONVERT(int, DB_ID(@name))", Ct, ("@name", current.DatabaseName)));
+        Assert.IsType<int>(await SqlOperations.ScalarAsync(server, "SELECT CONVERT(int, DB_ID(@name))", Ct, ("@name", TenancyConnections.TenantDatabase(beta.Id))));
+        Assert.IsType<int>(await SqlOperations.ScalarAsync(server, "SELECT CONVERT(int, DB_ID('saas_platform'))", Ct));
         Assert.Equal(0, await SqlOperations.ScalarAsync(server, "SELECT COUNT(*) FROM sys.server_principals WHERE name IN (@runtime,@migrator)", Ct,
             ("@runtime", "saas_rt_" + tenant.Id.ToString("N")), ("@migrator", "saas_mg_" + tenant.Id.ToString("N"))));
         Assert.Equal(result, await service.PurgeAsync(tenant.Id, operation, current.RegistryVersion, Ct));
@@ -71,7 +71,7 @@ public sealed partial class M3RuntimeTests
         var adapter = new PlanFixture(Environment.CustomerAdmin(tenant));
         await Assert.ThrowsAsync<TenantContractException>(() => new TenantOperations(new(), adapter, adapter).PurgeAsync(tenant.Id, Guid.NewGuid(), current.RegistryVersion, Ct));
         await using var server = await SqlOperations.OpenAsync(Environment.Admin, Ct);
-        Assert.IsType<int>(await SqlOperations.ScalarAsync(server, "SELECT DB_ID(@name)", Ct, ("@name", current.DatabaseName)));
+        Assert.IsType<int>(await SqlOperations.ScalarAsync(server, "SELECT CONVERT(int, DB_ID(@name))", Ct, ("@name", current.DatabaseName)));
         Assert.Null((await PurgeRegistrationAsync(tenant)).PurgedAt);
     }
 

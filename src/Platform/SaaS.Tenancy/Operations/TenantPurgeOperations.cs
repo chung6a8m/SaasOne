@@ -162,7 +162,7 @@ public sealed partial class TenantOperations
     private async Task<bool> PurgeTargetExistsAsync(string name, CancellationToken ct)
     {
         await using var sql = await SqlOperations.OpenAsync(connections.Provisioner(), ct);
-        return await SqlOperations.ScalarAsync(sql, "SELECT DB_ID(@database)", ct, ("@database", name)) is int;
+        return await SqlOperations.ScalarAsync(sql, "SELECT CASE WHEN DB_ID(@database) IS NULL THEN 0 ELSE 1 END", ct, ("@database", name)) is int exists && exists == 1;
     }
     private async Task DeletePurgeTargetAsync(TenantRegistration tenant, CancellationToken ct)
     {

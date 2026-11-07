@@ -8,11 +8,18 @@ public sealed class TenantDbContext(DbContextOptions<TenantDbContext> options) :
     public DbSet<TenantDatabaseIdentity> Identity => Set<TenantDatabaseIdentity>();
     public DbSet<TenantBaseline> Baseline => Set<TenantBaseline>();
 
+    public DbSet<TenantApplicationProfile> ApplicationProfile => Set<TenantApplicationProfile>();
+
     public DbSet<TenantWriteGateRecord> WriteGate => Set<TenantWriteGateRecord>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.HasDefaultSchema("tenancy");
+        var profile = model.Entity<TenantApplicationProfile>();
+        profile.ToTable("ApplicationProfile", table => table.HasCheckConstraint("CK_ApplicationProfile", "[Id] = 1 AND [Version] > 0 AND [TenantId] <> '00000000-0000-0000-0000-000000000000'"));
+        profile.HasKey(x => x.Id); profile.Property(x => x.Id).ValueGeneratedNever();
+        profile.Property(x => x.Plan).HasMaxLength(64).IsUnicode(false);
+        profile.Property(x => x.ManifestHash).HasMaxLength(64).IsUnicode(false);
         var gate = model.Entity<TenantWriteGateRecord>();
         gate.ToTable("WriteGate", table => table.HasCheckConstraint("CK_TenantWriteGate", "[Id] = 1 AND [Version] > 0 AND [Fence] > 0 AND [TenantId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000'"));
         gate.HasKey(x => x.Id); gate.Property(x => x.Id).ValueGeneratedNever();

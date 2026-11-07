@@ -23,6 +23,17 @@ namespace SaaS.Tenancy.Migrations.Tenant
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("SaaS.Tenancy.Data.TenantApplicationProfile", b =>
+                {
+                    b.Property<int>("Id").HasColumnType("int");
+                    b.Property<Guid>("TenantId").HasColumnType("uniqueidentifier");
+                    b.Property<int>("Version").HasColumnType("int");
+                    b.Property<string>("Plan").IsRequired().HasMaxLength(64).IsUnicode(false).HasColumnType("varchar(64)");
+                    b.Property<string>("ManifestHash").IsRequired().HasMaxLength(64).IsUnicode(false).HasColumnType("varchar(64)");
+                    b.HasKey("Id");
+                    b.ToTable("ApplicationProfile", "tenancy", t => t.HasCheckConstraint("CK_ApplicationProfile", "[Id] = 1 AND [Version] > 0 AND [TenantId] <> '00000000-0000-0000-0000-000000000000'"));
+                });
+
             modelBuilder.Entity("SaaS.Tenancy.Data.TenantBaseline", b =>
                 {
                     b.Property<int>("Id")
