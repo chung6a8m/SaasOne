@@ -305,7 +305,8 @@ internal sealed class M4SqlHarness : IAsyncDisposable
         var target = await M3SqlTests.ReadyAsync();
         try
         {
-            // The initial red service run intentionally has no Orders migration yet.
+            await using var orders = SaaS.Orders.Data.OrdersDbContext.Open(target.Connection);
+            await orders.Database.MigrateAsync(ct);
             var result = new M4SqlHarness { Target = target, ApprovalEntitled = approvals };
             if (approvals)
             {

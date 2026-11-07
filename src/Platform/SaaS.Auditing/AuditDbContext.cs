@@ -15,6 +15,10 @@ public sealed class TenantAuditEvent
     public long SecurityGeneration { get; set; }
     public long ResultRevision { get; set; }
     public DateTimeOffset OccurredAt { get; set; }
+    public string? ResourceType { get; set; }
+    public Guid? ResourceId { get; set; }
+    public string? CorrelationId { get; set; }
+    public string? ChangesJson { get; set; }
 }
 
 public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options) : DbContext(options)
@@ -33,6 +37,8 @@ public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options) : D
         audit.Property(x => x.Action).HasMaxLength(64).IsUnicode(false);
         audit.Property(x => x.OperatorActor).HasMaxLength(128);
         audit.Property(x => x.PayloadHash).HasMaxLength(64).IsUnicode(false);
+        audit.Property(x => x.ResourceType).HasMaxLength(64).IsUnicode(false);
+        audit.Property(x => x.CorrelationId).HasMaxLength(128);
         audit.HasIndex(x => new { x.TenantId, x.OccurredAt });
     }
     private void Guard()
