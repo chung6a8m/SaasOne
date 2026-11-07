@@ -14,9 +14,9 @@ using Xunit;
 using static SaaS.UnitTests.M4HttpTests;
 namespace SaaS.UnitTests;
 
-[Collection("M1 SQL")]
+[Collection("M5 HTTP SQL")]
 [Trait("Category", "SqlM5")]
-public sealed class M5HttpTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixture>
+public sealed class M5HttpTests(M1SqlFixture fixture)
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
     private M1SqlEnvironment Environment => fixture.Environment;
@@ -88,7 +88,7 @@ public sealed class M5HttpTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixtu
             using var invalid = await ApiAsync(http, token, path, "forged-decision", body); Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         }
         using var cross = await ApiAsync(http, token, "/beta/api/v1/orders/" + order.Id + "/approve", "cross-decision", Expected(order));
-        Assert.Equal(HttpStatusCode.Forbidden, cross.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, cross.StatusCode);
         await using var db = ApprovalsDbContext.Open(Environment.CustomerAdmin(Alpha)); Assert.Empty(await db.Decisions.ToArrayAsync(Ct));
     }
     [Fact]

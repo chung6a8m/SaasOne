@@ -174,7 +174,7 @@ public sealed class M5ApprovalSqlTests
         await Error(409, () => h.Service().ExecuteAsync(M4PolicyTests.Command(pending, OrderAction.Edit), Ct));
         h.Actor = Guid.NewGuid();
         await using var sql = await SqlOperations.OpenAsync(h.Connection, Ct);
-        await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'approvals.Decisions.Reason', 'HiddenReason', 'COLUMN';", Ct);
+        await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'approvals.Decisions.DecidedAt', 'HiddenDecidedAt', 'COLUMN';", Ct);
         await Error(503, () => h.Service().ExecuteAsync(M4PolicyTests.Command(pending, OrderAction.Approve), Ct));
         Assert.Equal(pending, await h.Service().GetAsync(pending.Id, Ct));
     }

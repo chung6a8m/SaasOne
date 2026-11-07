@@ -13,9 +13,9 @@ using SaaS.Web.Access;
 using Xunit;
 namespace SaaS.UnitTests;
 
-[Collection("M1 SQL")]
+[Collection("M5 HTTP SQL")]
 [Trait("Category", "SqlM5")]
-public sealed class M5PlanSqlTests(M1SqlFixture fixture) : IClassFixture<M1SqlFixture>
+public sealed class M5PlanSqlTests(M1SqlFixture fixture)
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
     private M1SqlEnvironment Environment => fixture.Environment;
