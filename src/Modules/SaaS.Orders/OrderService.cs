@@ -102,7 +102,10 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         }, ct);
     }, ct);
 
-    public Task<OrderView> GetAsync(Guid id, CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
+    public Task<OrderView> GetAsync(Guid id, CancellationToken ct) => ReadAsync(id, includeDecisions: false, ct);
+    public Task<OrderView> GetDetailAsync(Guid id, CancellationToken ct) => ReadAsync(id, includeDecisions: true, ct);
+
+    private Task<OrderView> ReadAsync(Guid id, bool includeDecisions, CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
     {
         if (id == Guid.Empty) throw new AccessDeniedException(404, "order_not_found");
         var initial = await AccessAsync(tx, token);
@@ -113,6 +116,21 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         await TenancyConnections.VerifySchemaAsync(db, token);
         var value = (await LoadAsync(db, id, token)).View();
         OrderPermissions.RequireRead(catalog, access, value);
+        if (includeDecisions && value.ApprovalRequired)
+        {
+            // The handler reads on this locked, caller-owned transaction, after Orders authorizes the reader.
+            // Historical decisions stay visible after rework or a plan downgrade.
+            if (approvalHandler is null) throw new AccessDeniedException(503, "approval_history_unavailable");
+            await approvalHandler.DemandReadyAsync(tx, token);
+            var decisions = await approvalHandler.ReadDecisionsAsync(value.Id, value.Revision, tx, token);
+            if ((value.Status is OrderStatus.Rejected or OrderStatus.Confirmed)
+                && !decisions.Any(x => x.ResultRevision == value.Revision && x.Approved == (value.Status == OrderStatus.Confirmed)))
+                throw new AccessDeniedException(503, "approval_history_invalid");
+            if (decisions.Length > 0) value = value with { ApprovalDecisions = decisions };
+            // An intervening ACL revocation must not turn an earlier allow into a disclosed reason.
+            var refreshed = await AccessAsync(tx, token); SameIdentity(initial, refreshed);
+            OrderPermissions.RequireRead(catalog, refreshed, value);
+        }
         return value;
     }, ct), ct);
 

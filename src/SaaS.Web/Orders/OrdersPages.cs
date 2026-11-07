@@ -60,6 +60,20 @@ internal static class OrdersPages
             .Append(Number(order.Revision)).Append("</dd><dt>Approval obligation</dt><dd>")
             .Append(order.ApprovalRequired ? "Recorded; retained in history" : "Not recorded").Append("</dd></dl><h2>Notes</h2><pre>")
             .Append(E(order.Notes)).Append("</pre>");
+        if (order.ApprovalDecisions is { Length: > 0 } decisions)
+        {
+            html.Append("<h2>Approval decisions</h2><ol>");
+            foreach (var decision in decisions)
+            {
+                html.Append("<li>Submitted revision ").Append(Number(decision.SubmittedRevision))
+                    .Append(", decision revision ").Append(Number(decision.ResultRevision))
+                    .Append(": ").Append(decision.Approved ? "Approved" : "Rejected");
+                if (!decision.Approved)
+                    html.Append("<p>Reason for rejection:</p><pre>").Append(E(decision.Reason)).Append("</pre>");
+                html.Append("</li>");
+            }
+            html.Append("</ol>");
+        }
         if (order.Status is OrderStatus.Draft or OrderStatus.Rejected)
         {
             var csrf = Csrf(context);

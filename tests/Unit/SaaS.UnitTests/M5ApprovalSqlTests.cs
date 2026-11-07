@@ -203,6 +203,8 @@ public sealed class M5ApprovalSqlTests
     {
         private readonly OrderApprovalHandler _inner = new();
         public Task DemandReadyAsync(TenantTransaction tx, CancellationToken ct) => _inner.DemandReadyAsync(tx, ct);
+        public Task<OrderApprovalDecisionView[]> ReadDecisionsAsync(Guid id, long revision, TenantTransaction tx, CancellationToken ct)
+            => _inner.ReadDecisionsAsync(id, revision, tx, ct);
         public async Task SubmittedAsync(OrderApprovalSubmission value, TenantTransaction tx, CancellationToken ct)
         { await _inner.SubmittedAsync(value, tx, ct); throw new IOException("Injected failure after request write"); }
         public async Task DecidedAsync(OrderApprovalDecision value, TenantTransaction tx, CancellationToken ct)

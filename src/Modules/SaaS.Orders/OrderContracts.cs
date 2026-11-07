@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using SaaS.Abstractions.Tenancy;
 using SaaS.AccessControl;
 namespace SaaS.Orders;
@@ -9,7 +10,14 @@ public sealed record OrderCommand(OrderAction Action, string Key, Guid? OrderId 
     string? ExpectedVersion = null, OrderDraft? Draft = null, string? Reason = null);
 public sealed record OrderView(Guid Id, Guid CreatedBy, string Number, string CustomerName, decimal Amount, string Currency,
     string Notes, OrderStatus Status, long Revision, string Version, bool ApprovalRequired,
-    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)
+{
+    // Populated only for an authorized detail read, never for persisted revisions or receipts.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OrderApprovalDecisionView[]? ApprovalDecisions { get; init; }
+}
+public sealed record OrderApprovalDecisionView(long SubmittedRevision, long ResultRevision, bool Approved,
+    string? Reason, DateTimeOffset DecidedAt);
 public sealed record OrderTransition(OrderStatus Status, long Revision, bool ApprovalRequired);
 public sealed record OrderCommandResult(OrderView Order, bool Replayed, DateTimeOffset ReplayUntil);
 public sealed record OrderPage(OrderView[] Items, bool HasMore);
@@ -28,4 +36,7 @@ public interface IOrderApprovalHandler
     Task DemandReadyAsync(TenantTransaction transaction, CancellationToken ct);
     Task SubmittedAsync(OrderApprovalSubmission submission, TenantTransaction transaction, CancellationToken ct);
     Task DecidedAsync(OrderApprovalDecision decision, TenantTransaction transaction, CancellationToken ct);
+    // Orders enforces resource locks and current read rights before invoking this projection.
+    Task<OrderApprovalDecisionView[]> ReadDecisionsAsync(Guid orderId, long currentRevision,
+        TenantTransaction transaction, CancellationToken ct);
 }

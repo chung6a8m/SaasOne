@@ -17,6 +17,26 @@ public sealed class OrderApprovalHandler(TimeProvider? clock = null) : IOrderApp
         await TenancyConnections.VerifySchemaAsync(db, ct);
         await ApprovalHistoryVerifier.DemandColumnsAsync(transaction.Connection, transaction.Transaction, ct);
     }
+    public async Task<OrderApprovalDecisionView[]> ReadDecisionsAsync(Guid orderId, long currentRevision,
+        TenantTransaction transaction, CancellationToken ct)
+    {
+        if (orderId == Guid.Empty || currentRevision < 2)
+            throw new AccessDeniedException(503, "approval_history_invalid");
+        await using var db = ApprovalsDbContext.Open(transaction.Connection);
+        await db.Database.UseTransactionAsync(transaction.Transaction, ct);
+        await TenancyConnections.VerifySchemaAsync(db, ct);
+        var decisions = await db.Decisions.AsNoTracking().Where(x => x.OrderId == orderId)
+            .OrderBy(x => x.SubmittedRevision)
+            .Select(x => new OrderApprovalDecisionView(x.SubmittedRevision, x.ResultRevision, x.Approved,
+                x.Reason, x.DecidedAt))
+            .ToArrayAsync(ct);
+        if (decisions.Any(x => x.SubmittedRevision < 2 || x.ResultRevision != x.SubmittedRevision + 1
+            || x.ResultRevision > currentRevision || (x.Approved && x.Reason is not null)
+            || (!x.Approved && string.IsNullOrWhiteSpace(x.Reason))))
+            throw new AccessDeniedException(503, "approval_history_invalid");
+        return decisions;
+    }
+
     public async Task SubmittedAsync(OrderApprovalSubmission value, TenantTransaction transaction, CancellationToken ct)
     {
         await using var db = ApprovalsDbContext.Open(transaction.Connection);

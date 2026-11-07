@@ -75,6 +75,78 @@ public sealed class M5HttpTests(M1SqlFixture fixture)
         using (var rejected = await browser.PostAsync(path + "/reject", fields)) Assert.Equal(HttpStatusCode.SeeOther, rejected.StatusCode);
         await using var db = ApprovalsDbContext.Open(Environment.CustomerAdmin(Alpha));
         Assert.Equal("<script>plain text</script>", (await db.Decisions.SingleAsync(Ct)).Reason);
+        // The authenticated non-creator may read the normalized reason, without requiring Decide on GET.
+        using var read = await ApiAsync(http, http.CapturedTokens["alpha"].AccessToken, "/alpha/api/v1/orders/" + order.Id);
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        var current = (await read.Content.ReadFromJsonAsync<OrderView>(Ct))!;
+        Assert.Equal(OrderStatus.Rejected, current.Status);
+        var decision = Assert.Single(current.ApprovalDecisions!);
+        Assert.Equal(order.Revision, decision.SubmittedRevision);
+        Assert.Equal(current.Revision, decision.ResultRevision);
+        Assert.Equal("<script>plain text</script>", decision.Reason);
+        using var detail = await browser.GetAsync(path);
+        var html = await detail.Content.ReadAsStringAsync(Ct);
+        Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+        Assert.Contains("&lt;script&gt;plain text&lt;/script&gt;", html);
+        Assert.DoesNotContain("<script>plain text</script>", html);
+        await Setup.SeedAsync(Alpha, SalesAcl(http.UserId) with { Overrides = [new(http.UserId, "Orders.ViewOthers", PermissionEffect.Deny)] });
+        using var deniedApi = await ApiAsync(http, http.CapturedTokens["alpha"].AccessToken, "/alpha/api/v1/orders/" + order.Id);
+        using var deniedWeb = await browser.GetAsync(path);
+        Assert.Equal(HttpStatusCode.Forbidden, deniedApi.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, deniedWeb.StatusCode);
+        Assert.DoesNotContain("plain text", await deniedApi.Content.ReadAsStringAsync(Ct));
+    }
+    [Fact]
+    public async Task Native_creator_sees_rejection_reason_after_rework_but_revoked_read_cannot_see_it()
+    {
+        await using var setup = await Setup.HttpAsync(approval: true); var http = setup.Http;
+        using var browser = http.NewBrowser(); await LoginAsync(http, browser); var token = http.CapturedTokens["alpha"].AccessToken;
+        var draft = await CreateAsync(http, token);
+        using var submit = await ApiAsync(http, token, "/alpha/api/v1/orders/" + draft.Id + "/submit", "creator-submit-reason", Expected(draft));
+        var pending = (await ResultAsync(submit, HttpStatusCode.OK)).Order;
+        var reviewer = Guid.NewGuid();
+        var service = new OrderService(Environment.CustomerAdmin(Alpha), Alpha.Id, M4PolicyTests.Catalog,
+            (_, _) => Task.FromResult(M4PolicyTests.Access(reviewer, tenant: Alpha.Id)), new OrderApprovalHandler());
+        var rejected = (await service.ExecuteAsync(M4PolicyTests.Command(pending, OrderAction.Reject, "creator-reject-reason")
+            with { Reason = "  <script>alert(1)</script> & revise  " }, Ct)).Order;
+        var apiPath = "/alpha/api/v1/orders/" + draft.Id; var webPath = "/alpha/orders/" + draft.Id;
+        using (var read = await ApiAsync(http, token, apiPath))
+        {
+            Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+            var current = (await read.Content.ReadFromJsonAsync<OrderView>(Ct))!;
+            Assert.Equal(OrderStatus.Rejected, current.Status);
+            var decision = Assert.Single(current.ApprovalDecisions!);
+            Assert.False(decision.Approved);
+            Assert.Equal(pending.Revision, decision.SubmittedRevision);
+            Assert.Equal(rejected.Revision, decision.ResultRevision);
+            Assert.Equal("<script>alert(1)</script> & revise", decision.Reason);
+        }
+        using (var page = await browser.GetAsync(webPath))
+        {
+            Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+            var html = await page.Content.ReadAsStringAsync(Ct);
+            Assert.Contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; revise", html);
+            Assert.DoesNotContain("<script>alert(1)</script> & revise", html);
+        }
+        using var edit = await ApiAsync(http, token, apiPath + "/edit", "creator-fix-reason",
+            new { expectedRevision = rejected.Revision, expectedVersion = rejected.Version, draft = M4PolicyTests.Draft with { Notes = "fixed" } });
+        var fixedDraft = (await ResultAsync(edit, HttpStatusCode.OK)).Order;
+        using var resubmit = await ApiAsync(http, token, apiPath + "/submit", "creator-resubmit-reason", Expected(fixedDraft));
+        var pendingAgain = (await ResultAsync(resubmit, HttpStatusCode.OK)).Order;
+        using (var history = await ApiAsync(http, token, apiPath))
+        {
+            Assert.Equal(HttpStatusCode.OK, history.StatusCode);
+            var current = (await history.Content.ReadFromJsonAsync<OrderView>(Ct))!;
+            Assert.Equal(pendingAgain.Revision, current.Revision);
+            Assert.Equal(OrderStatus.PendingApproval, current.Status);
+            Assert.Equal(rejected.Revision, Assert.Single(current.ApprovalDecisions!).ResultRevision);
+        }
+        await Setup.SeedAsync(Alpha, SalesAcl(http.UserId) with { Overrides = [new(http.UserId, "Orders.ViewOwn", PermissionEffect.Deny)] });
+        using var deniedApi = await ApiAsync(http, token, apiPath);
+        using var deniedWeb = await browser.GetAsync(webPath);
+        Assert.Equal(HttpStatusCode.Forbidden, deniedApi.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, deniedWeb.StatusCode);
+        Assert.DoesNotContain("revise", await deniedApi.Content.ReadAsStringAsync(Ct));
     }
     [Fact]
     public async Task Native_decisions_reject_forged_identity_marker_reason_and_cross_tenant_tokens()

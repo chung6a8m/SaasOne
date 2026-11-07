@@ -71,7 +71,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
                 }
                 else if (route.Id is { } id)
                 {
-                    var order = await service.GetAsync(id, ct);
+                    var order = await service.GetDetailAsync(id, ct);
                     if (route.Api) await context.Response.WriteAsJsonAsync(order, Json, ct);
                     else await OrdersPages.DetailAsync(context, order, order.Status == OrderStatus.PendingApproval && await service.CanDecideAsync(id, ct));
                 }
