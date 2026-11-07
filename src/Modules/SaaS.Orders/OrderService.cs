@@ -142,9 +142,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         var refreshed = await AccessAsync(tx, token); SameIdentity(access, refreshed);
         // Resource locks and the refreshed current authority precede all batch reads.
         // Never run these reads concurrently on the enlisted transaction connection.
-        var items = await LoadPageAsync(db, ids, token);
-        foreach (var value in items)
-            OrderPermissions.RequireRead(catalog, refreshed, value);
+        var items = await LoadPageAsync(db, ids, catalog, refreshed, token);
         // Recheck even an empty page; a revoked entitlement must not produce a success from an old allow.
         access = refreshed;
         if (!CanRead(true) && !CanRead(false)) throw new AccessDeniedException(403, "permission_denied");
@@ -184,7 +182,8 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
     private static Task LockAsync(TenantTransaction tx, string resource, bool exclusive, CancellationToken ct) =>
         SqlTransactionLocks.AcquireAsync((SqlConnection)tx.Connection, (SqlTransaction)tx.Transaction, resource, exclusive, 30000, ct);
     private static string ResourceLock(Guid id) => "orders-resource:" + id.ToString("N");
-    private static async Task<List<OrderView>> LoadPageAsync(OrdersDbContext db, Guid[] ids, CancellationToken ct)
+    private static async Task<List<OrderView>> LoadPageAsync(OrdersDbContext db, Guid[] ids,
+        PermissionCatalog catalog, OrderAccessContext access, CancellationToken ct)
     {
         var items = new List<OrderView>(ids.Length);
         if (ids.Length == 0) return items;
@@ -223,6 +222,8 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
                 || !history.TryGetValue(id, out var summary) || summary.Count != row.Revision
                 || !row.ApprovalRequired && summary.HistoricalMarker != 0)
                 throw new AccessDeniedException(503, "order_history_invalid");
+            // Preserve per-item integrity-then-current-permission failure ordering.
+            OrderPermissions.RequireRead(catalog, access, current);
             items.Add(current);
         }
         return items;
