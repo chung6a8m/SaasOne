@@ -241,6 +241,13 @@ public sealed class M4OrderSqlTests
         h.SetActor(Guid.NewGuid());
         var rejected = await h.Service().ExecuteAsync(M4PolicyTests.Command(pending.Order, OrderAction.Reject, "reject-key"), Ct);
         Assert.Equal(OrderStatus.Rejected, rejected.Order.Status);
+        var rejectedDetail = await h.Service().GetDetailAsync(rejected.Order.Id, Ct);
+        var rejectedDecision = Assert.Single(rejectedDetail.ApprovalDecisions!);
+        Assert.Equal(pending.Order.Revision, rejectedDecision.SubmittedRevision);
+        Assert.Equal(rejected.Order.Revision, rejectedDecision.ResultRevision);
+        Assert.False(rejectedDecision.Approved);
+        Assert.Equal("Incorrect amount", rejectedDecision.Reason);
+        Assert.NotEqual(default, rejectedDecision.DecidedAt);
         var replay = await h.Service().ExecuteAsync(M4PolicyTests.Command(pending.Order, OrderAction.Reject, "reject-key"), Ct);
         Assert.True(replay.Replayed); Assert.Equal(rejected.Order, replay.Order);
         h.SetActor(creator);
@@ -254,6 +261,19 @@ public sealed class M4OrderSqlTests
         await Error(409, () => h.Service().ExecuteAsync(M4PolicyTests.Command(pending.Order, OrderAction.Approve, "stale-decision"), Ct));
         var approved = await h.Service().ExecuteAsync(M4PolicyTests.Command(resubmitted.Order, OrderAction.Approve, "approve-key"), Ct);
         Assert.Equal(OrderStatus.Confirmed, approved.Order.Status); Assert.Equal(6, approved.Order.Revision); Assert.True(approved.Order.ApprovalRequired);
+        var decidedDetail = await h.Service().GetDetailAsync(approved.Order.Id, Ct);
+        var history = Assert.IsType<OrderApprovalDecisionView[]>(decidedDetail.ApprovalDecisions);
+        Assert.Equal(2, history.Length);
+        Assert.Equal(pending.Order.Revision, history[0].SubmittedRevision);
+        Assert.Equal(rejected.Order.Revision, history[0].ResultRevision);
+        Assert.False(history[0].Approved);
+        Assert.Equal("Incorrect amount", history[0].Reason);
+        Assert.Equal(resubmitted.Order.Revision, history[1].SubmittedRevision);
+        Assert.Equal(approved.Order.Revision, history[1].ResultRevision);
+        Assert.True(history[1].Approved);
+        Assert.Null(history[1].Reason);
+        Assert.NotEqual(default, history[1].DecidedAt);
+        Assert.Null((await h.Service().GetAsync(approved.Order.Id, Ct)).ApprovalDecisions);
         Assert.Equal(2, await h.CountAsync("[fixture].[Requests]", Ct));
         await h.CountsAsync(1, 6, 6, Ct);
     }
