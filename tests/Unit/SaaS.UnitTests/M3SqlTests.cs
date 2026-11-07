@@ -13,7 +13,7 @@ namespace SaaS.UnitTests;
 public sealed class M3SqlTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-    private static async Task<IsolatedCustomerDatabase> ReadyAsync()
+    internal static async Task<IsolatedCustomerDatabase> ReadyAsync()
     {
         var target = await IsolatedCustomerDatabase.CreateAsync(Ct);
         try

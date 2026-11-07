@@ -13,7 +13,7 @@ public static class TenantWriteGate
     {
         await using var command = SqlOperations.Command(connection, """
             SELECT g.TenantId, g.IsOpen, g.Version, g.OperationId, g.Fence, i.TenantId
-            FROM tenancy.WriteGate g CROSS JOIN tenancy.Identity i WHERE g.Id = 1 AND i.Id = 1
+            FROM [tenancy].[WriteGate] g CROSS JOIN [tenancy].[Identity] i WHERE g.Id = 1 AND i.Id = 1
             """);
         command.Transaction = transaction;
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -57,7 +57,7 @@ public static class TenantWriteGate
         }
         var next = state with { IsOpen = open, Version = checked(state.Version + 1), OperationId = operationId, Fence = fence };
         await using var command = SqlOperations.Command(sql, """
-            UPDATE tenancy.WriteGate SET IsOpen = @open, Version = @next, OperationId = @operation, Fence = @fence
+            UPDATE [tenancy].[WriteGate] SET IsOpen = @open, Version = @next, OperationId = @operation, Fence = @fence
             WHERE Id = 1 AND TenantId = @tenant AND Version = @expected
             """, ("@open", open), ("@next", next.Version), ("@operation", operationId), ("@fence", fence), ("@tenant", tenantId), ("@expected", expectedVersion));
         command.Transaction = transaction;
