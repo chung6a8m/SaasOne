@@ -149,7 +149,52 @@ try {
                     try {
                         $package = Open-M6Package $built.package $built.manifestSha256
                         Copy-SafeEvidence (Join-Path $package.root 'release.json') 'release/release.json'
-                        foreach ($entry in $package.manifest.files | Where-Object { $_.path -eq 'catalog.json' -or $_.path -match '^sql/[a-z]+\.sql$' }) {
+                        foreach ($entry in @($package.manifest.files | Where-Object { $_.path -eq 'catalog.json' -or $_.path -match '^sql/[a-z]+\.sql
+                            Copy-SafeEvidence (Resolve-M6Artifact $package.root $entry.path) ('release/' + $entry.path)
+                        }
+                    } finally { Close-M6Package $package }
+                }
+            }
+        }
+        if (Get-Command git -CommandType Application -ErrorAction SilentlyContinue) {
+            $report.sourceShaAfter = Get-M6Sha
+            $after = @(& git status --porcelain=v1 --untracked-files=all)
+            if ($LASTEXITCODE -ne 0 -or $after.Count -gt 0 -or ($null -ne $report.sourceSha -and $report.sourceShaAfter -cne $report.sourceSha)) {
+                $issues.Add('source_changed_or_dirty'); $code = 1; $report.status = 'FAIL'; $report.runtimeAcceptance = 'NOT_PROVEN'
+            }
+        }
+        $invalidSuites = @($suites | Where-Object { $_.total -le 0 -or $_.nonPassed -ne 0 })
+        if ($code -eq 0 -and $suites.Count -eq 0) {
+            $issues.Add('test_evidence_zero_or_nonpassing'); $code = 1; $report.status = 'FAIL'; $report.runtimeAcceptance = 'NOT_PROVEN'
+        }
+        if ($code -eq 0 -and $invalidSuites.Count -gt 0) {
+            $issues.Add('test_evidence_zero_or_nonpassing'); $code = 1; $report.status = 'FAIL'; $report.runtimeAcceptance = 'NOT_PROVEN'
+        }
+    } catch {
+        $issues.Add('evidence_collection_failed:' + (Protect-LocalText $_.Exception.Message)); $code = 1; $report.status = 'FAIL'; $report.runtimeAcceptance = 'NOT_PROVEN'
+    }
+    $report.completedUtc = [DateTimeOffset]::UtcNow; $report.exitCode = $code
+    try {
+        Write-M6Json (Join-Path $run 'summary.json') $report
+        $summary = "# Local verification $runId`n`nStatus: $($report.status)`nScope: $Scope`nSource: $($report.sourceSha)`nRuntime: $($report.runtimeAcceptance)`nOwner review: PENDING`nExit: $code`n`n"
+        $summary += "| Suite | Total | Passed | Other |`n|---|---:|---:|---:|`n"
+        foreach ($suite in $suites) { $summary += "| $($suite.file) | $($suite.total) | $($suite.passed) | $($suite.nonPassed) |`n" }
+        $summary += "`n## Issues`n" + ($issues -join "`n") + "`n`nThe ZIP excludes backups, credentials, App_Data, environment dumps and binaries. Review redacted logs before sharing. Release binaries remain local under artifacts/releases.`n"
+        [IO.File]::WriteAllText((Join-Path $run 'SUMMARY.md'), $summary, [Text.UTF8Encoding]::new($false))
+        $inventory = @(Get-ChildItem -LiteralPath $run -Recurse -File | Sort-Object FullName | ForEach-Object {
+            [ordered]@{ path = [IO.Path]::GetRelativePath($run, $_.FullName).Replace('\', '/'); length = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+        })
+        Write-M6Json (Join-Path $run 'checksums.json') $inventory
+        $zip = $run + '.zip'
+        [IO.Compression.ZipFile]::CreateFromDirectory($run, $zip)
+        [IO.File]::WriteAllText($zip + '.sha256', (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash + "`n")
+        Write-Host "Evidence: $zip"; Write-Host "Summary: $(Join-Path $run 'SUMMARY.md')"
+    } catch { $code = 1; Write-Host ('evidence_package_failed:' + $_.Exception.GetType().Name) }
+    if ($null -ne $lock) { $lock.Dispose() }
+    Pop-Location
+}
+exit $code
+ })) {
                             Copy-SafeEvidence (Resolve-M6Artifact $package.root $entry.path) ('release/' + $entry.path)
                         }
                     } finally { Close-M6Package $package }
