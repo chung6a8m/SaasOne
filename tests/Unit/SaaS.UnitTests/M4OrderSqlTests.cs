@@ -332,7 +332,7 @@ internal sealed class M4SqlHarness : IAsyncDisposable
             {
                 await using var sql = await SqlOperations.OpenAsync(target.Connection, ct);
                 await SqlOperations.ExecuteAsync(sql, "CREATE SCHEMA [fixture];", ct);
-                await SqlOperations.ExecuteAsync(sql, "CREATE TABLE [fixture].[Requests] ([OrderId] uniqueidentifier NOT NULL, [Revision] bigint NOT NULL, [Version] varchar(16) NOT NULL, [Decision] bit NULL, [Reason] nvarchar(1000) NULL, CONSTRAINT [PK_FixtureRequests] PRIMARY KEY ([OrderId], [Revision]));", ct);
+                await SqlOperations.ExecuteAsync(sql, "CREATE TABLE [fixture].[Requests] ([OrderId] uniqueidentifier NOT NULL, [Revision] bigint NOT NULL, [Version] varchar(16) NOT NULL, [Decision] bit NULL, [Reason] nvarchar(1000) NULL, [DecidedAt] datetimeoffset NULL, CONSTRAINT [PK_FixtureRequests] PRIMARY KEY ([OrderId], [Revision]));", ct);
                 result.Handler = new();
             }
             return result;
@@ -363,6 +363,28 @@ internal sealed class M4ApprovalFixture : IOrderApprovalHandler
         command.Transaction = (SqlTransaction)tx.Transaction;
         await command.ExecuteNonQueryAsync(ct);
     }
+    public async Task<OrderApprovalDecisionView[]> ReadDecisionsAsync(Guid orderId, long currentRevision, TenantTransaction tx, CancellationToken ct)
+    {
+        if (orderId == Guid.Empty || currentRevision < 2) throw new AccessDeniedException(503, "approval_history_invalid");
+        await using var command = SqlOperations.Command((SqlConnection)tx.Connection, """
+            SELECT [Revision], [Decision], [Reason], [DecidedAt] FROM [fixture].[Requests]
+            WHERE [OrderId] = @id AND [Decision] IS NOT NULL ORDER BY [Revision]
+            """, ("@id", orderId));
+        command.Transaction = (SqlTransaction)tx.Transaction;
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var decisions = new List<OrderApprovalDecisionView>();
+        while (await reader.ReadAsync(ct))
+        {
+            var revision = reader.GetInt64(0);
+            var approved = reader.GetBoolean(1);
+            var reason = reader.IsDBNull(2) ? null : reader.GetString(2);
+            if (revision < 2 || revision >= currentRevision || reader.IsDBNull(3)
+                || (approved && reason is not null) || (!approved && string.IsNullOrWhiteSpace(reason)))
+                throw new AccessDeniedException(503, "approval_history_invalid");
+            decisions.Add(new(revision, checked(revision + 1), approved, reason, reader.GetFieldValue<DateTimeOffset>(3)));
+        }
+        return decisions.ToArray();
+    }
     public async Task SubmittedAsync(OrderApprovalSubmission submission, TenantTransaction tx, CancellationToken ct)
     {
         await using var command = SqlOperations.Command((SqlConnection)tx.Connection,
@@ -375,7 +397,7 @@ internal sealed class M4ApprovalFixture : IOrderApprovalHandler
     public async Task DecidedAsync(OrderApprovalDecision decision, TenantTransaction tx, CancellationToken ct)
     {
         await using var command = SqlOperations.Command((SqlConnection)tx.Connection,
-            "UPDATE [fixture].[Requests] SET [Decision] = @approved, [Reason] = @reason WHERE [OrderId] = @id AND [Revision] = @revision AND [Version] = @version AND [Decision] IS NULL",
+            "UPDATE [fixture].[Requests] SET [Decision] = @approved, [Reason] = @reason, [DecidedAt] = TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') WHERE [OrderId] = @id AND [Revision] = @revision AND [Version] = @version AND [Decision] IS NULL",
             ("@id", decision.OrderId), ("@revision", decision.SubmittedRevision), ("@version", decision.SubmittedVersion),
             ("@approved", decision.Approved), ("@reason", decision.Reason));
         command.Transaction = (SqlTransaction)tx.Transaction;
