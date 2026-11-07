@@ -140,13 +140,11 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             .OrderByDescending(x => x.CreatedAt).ThenBy(x => x.Id).Skip(page * 50).Take(51).Select(x => x.Id).ToArrayAsync(token);
         foreach (var id in ids.Order()) await LockAsync(tx, ResourceLock(id), false, token);
         var refreshed = await AccessAsync(tx, token); SameIdentity(access, refreshed);
-        var items = new List<OrderView>();
-        foreach (var id in ids)
-        {
-            var value = (await LoadAsync(db, id, token)).View();
+        // Resource locks and the refreshed current authority precede all batch reads.
+        // Never run these reads concurrently on the enlisted transaction connection.
+        var items = await LoadPageAsync(db, ids, token);
+        foreach (var value in items)
             OrderPermissions.RequireRead(catalog, refreshed, value);
-            items.Add(value);
-        }
         // Recheck even an empty page; a revoked entitlement must not produce a success from an old allow.
         access = refreshed;
         if (!CanRead(true) && !CanRead(false)) throw new AccessDeniedException(403, "permission_denied");
@@ -186,6 +184,50 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
     private static Task LockAsync(TenantTransaction tx, string resource, bool exclusive, CancellationToken ct) =>
         SqlTransactionLocks.AcquireAsync((SqlConnection)tx.Connection, (SqlTransaction)tx.Transaction, resource, exclusive, 30000, ct);
     private static string ResourceLock(Guid id) => "orders-resource:" + id.ToString("N");
+    private static async Task<List<OrderView>> LoadPageAsync(OrdersDbContext db, Guid[] ids, CancellationToken ct)
+    {
+        var items = new List<OrderView>(ids.Length);
+        if (ids.Length == 0) return items;
+
+        // Four bounded SELECTs for a full page: page IDs, Orders, current revisions,
+        // and grouped history counts/markers. The existing per-resource locks stay ordered.
+        var rows = await db.Orders.AsNoTracking()
+            .Where(x => ids.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        var latest = await (
+            from revision in db.Revisions.AsNoTracking()
+            join order in db.Orders.AsNoTracking() on revision.OrderId equals order.Id
+            where ids.Contains(order.Id) && revision.Revision == order.Revision
+            select revision
+        ).ToDictionaryAsync(x => x.OrderId, ct);
+        var history = await db.Revisions.AsNoTracking()
+            .Where(x => ids.Contains(x.OrderId))
+            .GroupBy(x => x.OrderId)
+            .Select(group => new
+            {
+                OrderId = group.Key,
+                Count = group.LongCount(),
+                HistoricalMarker = group.Max(x => x.ApprovalRequired ? 1 : 0)
+            }).ToDictionaryAsync(x => x.OrderId, ct);
+
+        // The latest snapshot, exact revision count and *all* past approval markers
+        // are still verified for every row, including the pagination sentinel.
+        foreach (var id in ids)
+        {
+            if (!rows.TryGetValue(id, out var row))
+                throw new AccessDeniedException(404, "order_not_found");
+            var current = row.View();
+            OrderPolicy.DemandIntegrity(current);
+            if (!latest.TryGetValue(id, out var revision)
+                || revision.Status != row.Status || revision.ApprovalRequired != row.ApprovalRequired
+                || JsonSerializer.Deserialize<OrderView>(revision.SnapshotJson) != current
+                || !history.TryGetValue(id, out var summary) || summary.Count != row.Revision
+                || !row.ApprovalRequired && summary.HistoricalMarker != 0)
+                throw new AccessDeniedException(503, "order_history_invalid");
+            items.Add(current);
+        }
+        return items;
+    }
+
     private static async Task<OrderRow> LoadAsync(OrdersDbContext db, Guid id, CancellationToken ct)
     {
         var row = await db.Orders.SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw new AccessDeniedException(404, "order_not_found");
