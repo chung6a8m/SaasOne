@@ -81,8 +81,10 @@ public sealed partial class TenantOperations
         DemandRecovery(tenant, operation, expectedVersion);
         await DemandRecoveryAuthorityAsync(db, operation, actor, decision.AllowApprovalUpgrade, ct);
         // Once replacement could have committed, its document is immutable. A new decision needs a new operation/generation.
-        if (operation.Checkpoint >= ResourceCheckpoint.AclApplied
-            && (operation.ApprovedHash != decision.AclHash || operation.ApprovedBy != actor || operation.AllowApprovalUpgrade != decision.AllowApprovalUpgrade))
+        if ((operation.Checkpoint >= ResourceCheckpoint.AclApplied
+            || await db.Audit.AnyAsync(x => x.TenantId == tenantId && x.OperationId == operationId && x.Action == "RecoveryAclApplyStarted", ct))
+            && (operation.ApprovedHash != decision.AclHash || operation.ApprovedAcl != decision.AclJson || operation.ApprovedBy != actor
+                || operation.AllowApprovalUpgrade != decision.AllowApprovalUpgrade || operation.ApprovalReason != decision.Reason))
             throw new TenantContractException("recovery_decision_already_applied");
         operation.ApprovedAcl = decision.AclJson;
         operation.ApprovedHash = decision.AclHash;
@@ -141,6 +143,7 @@ public sealed partial class TenantOperations
             await DemandClosedAsync(work, ct);
             if (!await reconciler.VerifyAsync(context, selected, customer, ct)) throw new TenantContractException("plan_not_ready");
             await MoveAsync(work, ResourceCheckpoint.EntitlementsCommitted, (current, _) => current.Plan = selected, ct);
+            await FreezeRecoveryDecisionAsync(work, ct);
             var approval = Approval(work);
             var marker = await applier.ApplyAsync(customer, approval, (value, token) => DemandCurrentApprovalAsync(work, value, token), ct);
             DemandMarker(marker, approval);
@@ -153,6 +156,23 @@ public sealed partial class TenantOperations
             return await CompleteRecoveryAsync(work, applier.RequiredMemberships(approval), ct);
         }
         catch (Exception error) { await RecordFailureAsync(work, error, ct); throw; }
+    }
+
+    private async Task FreezeRecoveryDecisionAsync(Work work, CancellationToken ct)
+    {
+        await DemandOwnedAsync(work, ct);
+        await using var db = TenancyConnections.PlatformContext(work.Lease.Connection);
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var tenant = await db.Tenants.SingleAsync(x => x.Id == work.Tenant.Id, ct);
+        var operation = await db.ResourceOperations.SingleAsync(x => x.Id == work.Operation.Id, ct);
+        DemandOwned(tenant, operation, work.Operation.Stamp());
+        await DemandApprovedAsync(db, operation, ct);
+        if (!await db.Audit.AnyAsync(x => x.TenantId == tenant.Id && x.OperationId == operation.Id && x.Action == "RecoveryAclApplyStarted", ct))
+        {
+            db.Audit.Add(RecoveryAudit(work.Actor, tenant, operation, "RecoveryAclApplyStarted"));
+            await db.SaveChangesAsync(ct);
+        }
+        await transaction.CommitAsync(ct);
     }
 
     private async Task<ResourceResult> CompleteRecoveryAsync(Work work, IReadOnlyCollection<Guid> members, CancellationToken ct)
