@@ -2003,6 +2003,15 @@
           "SaaS.Tenancy": "[1.0.0, )"
         }
       },
+      "saas.orders": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )",
+          "SaaS.AccessControl": "[1.0.0, )",
+          "SaaS.Auditing": "[1.0.0, )",
+          "SaaS.Tenancy": "[1.0.0, )"
+        }
+      },
       "saas.tenancy": {
         "type": "Project",
         "dependencies": {
@@ -2029,6 +2038,7 @@
           "SaaS.AccessControl": "[1.0.0, )",
           "SaaS.Auditing": "[1.0.0, )",
           "SaaS.Identity": "[1.0.0, )",
+          "SaaS.Orders": "[1.0.0, )",
           "SaaS.Tenancy": "[1.0.0, )",
           "SaaS.Theme.App": "[1.0.0, )"
         }
