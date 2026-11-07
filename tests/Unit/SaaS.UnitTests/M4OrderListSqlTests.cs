@@ -28,8 +28,8 @@ public sealed class M4OrderListSqlTests
             Assert.Equal(50, page.Items.Length);
             Assert.True(page.HasMore);
             Assert.Equal(rows.Take(50).Select(x => x.Id), page.Items.Select(x => x.Id));
-            // Includes the ID query and all integrity reads, regardless of page size.
-            Assert.InRange(queries.Count, 4, 5);
+            // Counts only Orders/revisions data SELECTs (not schema, authority or lock commands).
+            Assert.Equal(4, queries.Count);
         }
 
         h.Deny("Orders.ViewOthers");
@@ -81,7 +81,7 @@ public sealed class M4OrderListSqlTests
         var invalid = await Assert.ThrowsAsync<AccessDeniedException>(() => h.Service().ListAsync(0, Ct));
         Assert.Equal(503, invalid.StatusCode);
         Assert.Equal("order_history_invalid", invalid.Code);
-        Assert.InRange(queries.Count, 4, 5);
+        Assert.Equal(4, queries.Count);
     }
 
     private static async Task<OrderRow[]> SeedAsync(M4SqlHarness h, int owned, int other)
@@ -142,7 +142,8 @@ public sealed class M4OrderListSqlTests
                 || entry.Value is not CommandExecutedEventData data
                 || data.Context is not OrdersDbContext
                 || !string.Equals(data.Command.Connection?.Database, _database, StringComparison.OrdinalIgnoreCase)
-                || !data.Command.CommandText.Contains("[orders].[", StringComparison.OrdinalIgnoreCase))
+                || !(data.Command.CommandText.Contains("[orders].[Orders]", StringComparison.OrdinalIgnoreCase)
+                    || data.Command.CommandText.Contains("[orders].[Revisions]", StringComparison.OrdinalIgnoreCase)))
                 return;
             Interlocked.Increment(ref _count);
         }
