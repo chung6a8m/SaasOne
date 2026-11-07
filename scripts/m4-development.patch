@@ -1,0 +1,49 @@
+diff --git a/src/Platform/SaaS.Auditing/AuditDbContext.cs b/src/Platform/SaaS.Auditing/AuditDbContext.cs
+--- a/src/Platform/SaaS.Auditing/AuditDbContext.cs
++++ b/src/Platform/SaaS.Auditing/AuditDbContext.cs
+@@ -14,6 +14,10 @@
+     public long SecurityGeneration { get; set; }
+     public long ResultRevision { get; set; }
+     public DateTimeOffset OccurredAt { get; set; }
++    public string? ResourceType { get; set; }
++    public Guid? ResourceId { get; set; }
++    public string? CorrelationId { get; set; }
++    public string? ChangesJson { get; set; }
+ }
+ 
+ public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options) : DbContext(options)
+@@ -33,6 +37,8 @@
+         audit.Property(x => x.Action).HasMaxLength(64).IsUnicode(false);
+         audit.Property(x => x.OperatorActor).HasMaxLength(128);
+         audit.Property(x => x.PayloadHash).HasMaxLength(64).IsUnicode(false);
++        audit.Property(x => x.ResourceType).HasMaxLength(64).IsUnicode(false);
++        audit.Property(x => x.CorrelationId).HasMaxLength(128);
+         audit.HasIndex(x => new { x.TenantId, x.OccurredAt });
+     }
+     private void Guard()
+diff --git a/tests/Unit/SaaS.UnitTests/M4OrderSqlTests.cs b/tests/Unit/SaaS.UnitTests/M4OrderSqlTests.cs
+--- a/tests/Unit/SaaS.UnitTests/M4OrderSqlTests.cs
++++ b/tests/Unit/SaaS.UnitTests/M4OrderSqlTests.cs
+@@ -286,7 +286,8 @@
+         var target = await M3SqlTests.ReadyAsync();
+         try
+         {
+-            // The initial red service run intentionally has no Orders migration yet.
++            await using var orders = SaaS.Orders.Data.OrdersDbContext.Open(target.Connection);
++            await orders.Database.MigrateAsync(ct);
+             var result = new M4SqlHarness { Target = target, ApprovalEntitled = approvals };
+             if (approvals)
+             {
+diff --git a/scripts/m4-mandatory-cases.json b/scripts/m4-mandatory-cases.json
+--- a/scripts/m4-mandatory-cases.json
++++ b/scripts/m4-mandatory-cases.json
+@@ -1,4 +1,9 @@
+ [
++  "SaaS.UnitTests.M4ObligationSqlTests.Empty_verified_orders_schema_is_clear_but_a_different_database_identity_is_unknown",
++  "SaaS.UnitTests.M4ObligationSqlTests.Reader_counts_pending_rejected_and_rework_without_an_entitlement_or_handler_dependency",
++  "SaaS.UnitTests.M4ObligationSqlTests.Confirmed_order_preserves_its_marker_but_no_longer_counts_as_outstanding",
++  "SaaS.UnitTests.M4ObligationSqlTests.Missing_marker_or_history_never_becomes_an_empty_clear_result",
++  "SaaS.UnitTests.M4ObligationSqlTests.Unknown_state_and_erased_historical_marker_fail_closed",
+   "SaaS.UnitTests.M4HttpTests.Orders_API_route_authenticates_before_reading_business_data",
+   "SaaS.UnitTests.M4HttpTests.Orders_web_route_authenticates_before_reading_business_data",
+   "SaaS.UnitTests.M4OrderSqlTests.Create_persists_one_order_revision_audit_and_receipt_and_reads_the_same_rowversion",
