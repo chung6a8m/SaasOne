@@ -79,6 +79,8 @@ public sealed class SqlProvisioner(string connection)
         await SqlOperations.ExecuteAsync(sql, """
             IF DATABASE_PRINCIPAL_ID('saas_operator') IS NULL CREATE ROLE [saas_operator];
             GRANT SELECT, INSERT, UPDATE ON SCHEMA::[platform] TO [saas_operator];
+            GRANT SELECT, INSERT, UPDATE ON SCHEMA::[identity] TO [saas_operator];
+            DENY INSERT, UPDATE, DELETE ON [platform].[RecoveryAuthorities] TO [saas_operator];
             DENY UPDATE, DELETE ON [platform].[OperationalAudit] TO [saas_operator];
             IF IS_ROLEMEMBER('saas_operator', @login) <> 1
             BEGIN

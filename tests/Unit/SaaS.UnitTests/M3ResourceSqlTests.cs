@@ -141,8 +141,8 @@ public sealed partial class M3RuntimeTests(M1SqlFixture fixture) : IClassFixture
             await ClosedAsync(ct); Calls.Add("Read");
             return Obligation switch { "Clear" => new(ObligationState.Clear, 0), "Unknown" => new(ObligationState.Unknown, 0), _ => new(ObligationState.Outstanding, 1) };
         }
-        public async Task MigrateAsync(TenantContext tenant, string target, CancellationToken ct) { await ClosedAsync(ct); Calls.Add("Migrate:" + target); }
-        public async Task ApplyFeaturesAsync(TenantContext tenant, string target, CancellationToken ct) { await ClosedAsync(ct); Assert.Contains("Migrate:" + target, Calls); Calls.Add("Features:" + target); }
-        public async Task<bool> VerifyAsync(TenantContext tenant, string target, CancellationToken ct) { await ClosedAsync(ct); Calls.Add("Verify:" + target); return true; }
+        public async Task MigrateAsync(TenantContext tenant, string target, System.Data.Common.DbConnection ownedConnection, CancellationToken ct) { await ClosedAsync(ct); Assert.StartsWith("SaaS.Op.", new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(ownedConnection.ConnectionString).ApplicationName, StringComparison.Ordinal); Calls.Add("Migrate:" + target); }
+        public async Task ApplyFeaturesAsync(TenantContext tenant, string target, System.Data.Common.DbConnection ownedConnection, CancellationToken ct) { await ClosedAsync(ct); Assert.Contains("Migrate:" + target, Calls); Calls.Add("Features:" + target); }
+        public async Task<bool> VerifyAsync(TenantContext tenant, string target, System.Data.Common.DbConnection ownedConnection, CancellationToken ct) { await ClosedAsync(ct); Calls.Add("Verify:" + target); return true; }
     }
 }

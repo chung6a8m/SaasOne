@@ -16,7 +16,7 @@ public sealed class MigrationSnapshotTests
         var assembly = context.GetService<IMigrationsAssembly>();
         Assert.NotNull(assembly.ModelSnapshot);
         string[] expected = platform
-            ? ["20261106135648_PlatformBaselineV1", "20261106180112_IdentityAuthority"]
+            ? ["20261106135648_PlatformBaselineV1", "20261106180112_IdentityAuthority", "20261107023640_ResourceOperationsM3"]
             : ["20261106135652_TenantBaselineV1", "20261107015335_TenantWriteGateM3"];
         Assert.Equal(expected, assembly.Migrations.Keys.Order(StringComparer.Ordinal).ToArray());
         Assert.False(context.Database.HasPendingModelChanges());

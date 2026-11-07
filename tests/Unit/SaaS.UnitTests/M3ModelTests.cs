@@ -8,6 +8,20 @@ namespace SaaS.UnitTests;
 public sealed class M3ModelTests
 {
     [Fact]
+    public void Operation_state_and_recovery_authority_remain_platform_owned_with_independent_acl_generation()
+    {
+        using var db = new PlatformDbContext(new DbContextOptionsBuilder<PlatformDbContext>().UseSqlServer().Options);
+        var tenant = db.Model.FindEntityType(typeof(TenantRegistration))!;
+        Assert.NotNull(tenant.FindProperty("AuthorizationGeneration"));
+        Assert.NotNull(tenant.FindProperty("RetiredAt"));
+        var operation = db.Model.GetEntityTypes().SingleOrDefault(x => x.ClrType.Name == "ResourceOperation");
+        Assert.NotNull(operation);
+        Assert.Equal("platform", operation.GetSchema());
+        Assert.True(operation.FindProperty("ExpectedRegistryVersion")!.IsConcurrencyToken);
+        Assert.Equal("platform", db.Model.GetEntityTypes().Single(x => x.ClrType.Name == "RecoveryAuthority").GetSchema());
+        Assert.Equal("platform", db.Model.FindEntityType(typeof(OperationalAudit))!.GetSchema());
+    }
+    [Fact]
     public void Access_and_customer_audit_have_distinct_owners_not_platform_audit()
     {
         using var access = new AccessDbContext(new DbContextOptionsBuilder<AccessDbContext>().UseSqlServer().Options);

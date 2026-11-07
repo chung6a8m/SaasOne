@@ -10,11 +10,12 @@ public interface IApprovalObligationReader
     Task<ObligationResult> ReadAsync(TenantContext tenant, DbConnection connection, CancellationToken cancellationToken);
 }
 
+/// <summary>All work must be awaited. Use the supplied operation-tagged connection (or its exact connection string); never detach resource-changing work.</summary>
 public interface IPlanReconciler
 {
-    Task MigrateAsync(TenantContext tenant, string targetPlan, CancellationToken cancellationToken);
-    Task ApplyFeaturesAsync(TenantContext tenant, string targetPlan, CancellationToken cancellationToken);
-    Task<bool> VerifyAsync(TenantContext tenant, string targetPlan, CancellationToken cancellationToken);
+    Task MigrateAsync(TenantContext tenant, string targetPlan, DbConnection ownedConnection, CancellationToken cancellationToken);
+    Task ApplyFeaturesAsync(TenantContext tenant, string targetPlan, DbConnection ownedConnection, CancellationToken cancellationToken);
+    Task<bool> VerifyAsync(TenantContext tenant, string targetPlan, DbConnection ownedConnection, CancellationToken cancellationToken);
 }
 
 public sealed record TenantTransaction(DbConnection Connection, DbTransaction Transaction);

@@ -12,13 +12,14 @@ public sealed partial class PlatformDbContext(DbContextOptions<PlatformDbContext
     {
         model.HasDefaultSchema("platform");
         IdentityModel.Configure(model);
+        ResourceOperationsModel.Configure(model);
         var tenant = model.Entity<TenantRegistration>();
         tenant.ToTable("Tenants", table =>
         {
             table.HasCheckConstraint("CK_Tenants_Id", "[Id] <> '00000000-0000-0000-0000-000000000000'");
-            table.HasCheckConstraint("CK_Tenants_Version", "[RegistryVersion] > 0 AND [Fence] > 0");
+            table.HasCheckConstraint("CK_Tenants_Version", "[RegistryVersion] > 0 AND [Fence] > 0 AND [AuthorizationGeneration] > 0");
             table.HasCheckConstraint("CK_Tenants_Subscription", "[Subscription] IN (1,2,3)");
-            table.HasCheckConstraint("CK_Tenants_Operation", "([Operation] = 0 AND [OperationId] IS NULL AND [OwnerId] IS NULL) OR ([Operation] BETWEEN 1 AND 6 AND [OperationId] IS NOT NULL)");
+            table.HasCheckConstraint("CK_Tenants_Operation", "([Operation] = 0 AND [OperationId] IS NULL AND [OwnerId] IS NULL) OR ([Operation] BETWEEN 1 AND 7 AND [OperationId] IS NOT NULL)");
         });
         tenant.HasKey(x => x.Id);
         tenant.Property(x => x.Id).ValueGeneratedNever();
@@ -28,6 +29,7 @@ public sealed partial class PlatformDbContext(DbContextOptions<PlatformDbContext
         tenant.Property(x => x.MigratorSecret).HasMaxLength(128).IsUnicode(false);
         tenant.Property(x => x.Plan).HasMaxLength(48).IsUnicode(false);
         tenant.Property(x => x.RegistryVersion).IsConcurrencyToken();
+        tenant.Property(x => x.AuthorizationGeneration).HasDefaultValue(1L);
         tenant.HasIndex(x => x.Slug).IsUnique();
         tenant.HasIndex(x => x.DatabaseName).IsUnique();
 
@@ -46,6 +48,7 @@ public sealed partial class PlatformDbContext(DbContextOptions<PlatformDbContext
         audit.HasKey(x => x.Id);
         audit.Property(x => x.Actor).HasMaxLength(128);
         audit.Property(x => x.Action).HasMaxLength(64).IsUnicode(false);
+        audit.Property(x => x.Details).HasMaxLength(8000);
         audit.HasIndex(x => new { x.TenantId, x.OperationId, x.OccurredAt });
 
         var bootstrap = model.Entity<PlatformBootstrap>();

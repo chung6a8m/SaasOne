@@ -18,6 +18,9 @@ public sealed class TenantRegistration
     public Guid? OwnerId { get; set; }
     public long Fence { get; set; }
     public bool SecurityRevalidationRequired { get; set; }
+    public long AuthorizationGeneration { get; set; } = 1;
+    public DateTimeOffset? RetiredAt { get; set; }
+    public DateTimeOffset? PurgedAt { get; set; }
     public TenantStatus Status() => new(Id, Subscription, ExpiresAt, Operation, RegistryVersion, OperationId, OwnerId, Fence, SecurityRevalidationRequired);
 }
 
@@ -46,6 +49,7 @@ public sealed class OperationalAudit
     public string Action { get; set; } = string.Empty;
     public long RegistryVersion { get; set; }
     public DateTimeOffset OccurredAt { get; set; }
+    public string Details { get; set; } = "{}";
 }
 
 public sealed class PlatformBootstrap
