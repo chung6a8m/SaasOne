@@ -33,6 +33,8 @@ $required = @(
     'Native_password_lockout_then_unlock_does_not_revive_prior_grants',
     'Native_access_token_revocation_also_invalidates_its_related_web_session',
     'Native_access_revocation_reaches_web_first_and_survives_restart',
+    'Rotated_native_history_detects_old_access_revocation_without_cross_family_effect',
+    'Native_access_binding_violations_are_rejected_by_index_only_query',
     'Normal_access_expiry_does_not_shorten_the_independent_web_session',
     'Explicit_clock_is_shared_by_the_authority_in_every_shell',
     'Identity_runtime_cannot_manage_memberships_clients_registry_or_schema',

@@ -3,9 +3,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using OpenIddict.Abstractions;
 using OpenIddict.Core;
+using OrchardCore.OpenId.YesSql.Indexes;
+using OrchardCore.OpenId.YesSql.Models;
 using OrchardCore.Environment.Shell;
 using OrchardCore.Users;
 using OrchardCore.Users.Models;
+using YesSql;
 
 namespace SaaS.Identity;
 
@@ -44,22 +47,25 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
             || await manager.GetSubjectAsync(authorization, cancellationToken) != subject)
             throw new IdentityDeniedException(401, "grant_invalid");
 
-        // Each application family owns a distinct native authorization. Native access
-        // revocation must also invalidate its web session/refresh chain, including when
-        // web is the first request after the commit. Read the issuer, never a local cache.
-        // Normal access-token expiry is NOT web-session expiry: the latter has its own
-        // server-side idle/absolute/subscription limits. Code redemption can legitimately
-        // precede the first access entry, and redeemed refresh/code entries are not reuse.
-        var tokens = provider.GetRequiredService<IOpenIddictTokenManager>();
-        await foreach (var token in tokens.FindByAuthorizationIdAsync(authorizationId, cancellationToken))
-        {
-            if (await tokens.GetTypeAsync(token, cancellationToken) != OpenIddictConstants.TokenTypeIdentifiers.AccessToken) continue;
-            if (await tokens.GetStatusAsync(token, cancellationToken) != OpenIddictConstants.Statuses.Valid
-                || await tokens.GetSubjectAsync(token, cancellationToken) != subject
-                || await tokens.GetAuthorizationIdAsync(token, cancellationToken) != authorizationId
-                || await tokens.GetApplicationIdAsync(token, cancellationToken) != await manager.GetApplicationIdAsync(authorization, cancellationToken))
-                throw new IdentityDeniedException(401, "grant_invalid");
-        }
+        // Each family has its own native authorization. Even an old revoked access
+        // entry must deny a web-first request and its refresh chain. Query the fresh
+        // Default issuer's YesSQL index for one violating access entry, not the entire
+        // growing history of redeemed codes/refresh tokens and valid access entries.
+        // No access entry is legitimate immediately after code issuance. Expired but
+        // otherwise valid access entries do not shorten the separate web-session bounds.
+        var applicationId = await manager.GetApplicationIdAsync(authorization, cancellationToken);
+        var invalidAccess = await provider.GetRequiredService<ISession>()
+            .QueryIndex<OpenIdTokenIndex>(entry =>
+                entry.AuthorizationId == authorizationId
+                && entry.Type == OpenIddictConstants.TokenTypeIdentifiers.AccessToken
+                && (entry.Status == null || entry.Status != OpenIddictConstants.Statuses.Valid
+                    || entry.Subject == null || entry.Subject != subject
+                    || entry.ApplicationId != applicationId
+                    || (applicationId != null && entry.ApplicationId == null)),
+                collection: OpenIdToken.OpenIdCollection)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (invalidAccess is not null)
+            throw new IdentityDeniedException(401, "grant_invalid");
     }, cancellationToken);
 
     public Task ValidateAccessAsync(string tokenId, string authorizationId, string subject, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
