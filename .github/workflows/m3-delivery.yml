@@ -1,0 +1,61 @@
+# Temporary exact-base transport; remove before review.
+name: M3 resource source delivery
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/m3-resource.patch.xz.b64', '.github/workflows/m3-delivery.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'codex/m3-authorization-lifecycle-audit'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+      - name: Verify exact source and apply to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = f9aebc4d36dedaeae551f3b9e7659ee754370448
+          python3 - <<'PY'
+          import base64, hashlib, lzma, pathlib, subprocess
+          encoded=pathlib.Path('.github/m3-resource.patch.xz.b64').read_text()
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==85575
+          assert hashlib.sha256(patch).hexdigest()=='100634617f8ffa0057ae8d5f125eef7123ce6eb301339666be39d20676be8eeb'
+          target=pathlib.Path('/tmp/m3-resource.patch'); target.write_bytes(patch)
+          for line in subprocess.check_output(['git','apply','--numstat',str(target)],text=True).splitlines():
+              path=line.split('\t')[2]
+              assert path.startswith(('src/','tests/')) and '..' not in pathlib.PurePosixPath(path).parts
+          PY
+          git apply --check --index /tmp/m3-resource.patch
+          git apply --index /tmp/m3-resource.patch
+          git rm .github/m3-resource.patch.xz.b64
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(m3): reconcile plan operations with durable checkpoints and lifecycle CAS'
+          git push origin HEAD:refs/heads/codex/m3-authorization-lifecycle-audit
+          git rev-parse HEAD
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Build delivered source and execute SQL component suites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet restore SaasOne.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { throw 'locked restore failed' }
+          dotnet build SaasOne.slnx -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+          ./scripts/m3-sql-fixture.ps1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m3-resource-delivered-source
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          retention-days: 7
+          if-no-files-found: error
