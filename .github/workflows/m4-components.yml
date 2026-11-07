@@ -1,0 +1,36 @@
+name: M4 Orders components
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m4-components-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  components:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Locked build and Orders SQL HTTP tests
+        shell: pwsh
+        run: |
+          dotnet restore SaasOne.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build SaasOne.slnx --configuration Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/m4-sql-fixture.ps1
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m4-components-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results/m4-poc
+          if-no-files-found: error
