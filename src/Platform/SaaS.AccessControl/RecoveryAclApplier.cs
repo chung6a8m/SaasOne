@@ -96,6 +96,7 @@ public sealed class RecoveryAclApplier(PermissionCatalog catalog,
             return new(approval.TenantId, approval.OperationId, approval.Generation, approval.AclHash, state.Revision);
         }
         catch (AccessDeniedException) { throw; }
+        catch (TenantContractException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (JsonException) { throw new AccessDeniedException(400, "acl_invalid"); }
         catch { throw new AccessDeniedException(503, "recovery_dependency_unavailable"); }
