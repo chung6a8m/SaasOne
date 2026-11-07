@@ -1,3 +1,4 @@
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -150,7 +151,8 @@ public sealed class IdentityInstaller(TenancyConnections connections, IdentityDe
     {
         await using var db = TenancyConnections.PlatformContext(connections.Platform("migrator"));
         var applications = provider.GetRequiredService<IOpenIddictApplicationManager>();
-        var query = db.Tenants.AsNoTracking();
+        var query = db.Tenants.AsNoTracking().Where(x => x.RetiredAt == null && x.PurgedAt == null
+            && x.Subscription != SubscriptionStatus.PendingDeletion);
         if (selectedTenant.HasValue) query = query.Where(x => x.Id == selectedTenant.Value);
         var tenants = await query.ToArrayAsync(ct);
         if (selectedTenant.HasValue && tenants.Length != 1) throw new TenantContractException("tenant_not_found");
@@ -197,7 +199,19 @@ public sealed class IdentityInstaller(TenancyConnections connections, IdentityDe
                 db.IdentityTenantSecurity.Add(new IdentityTenantSecurity { TenantId = tenant.Id });
         }
         await provider.GetRequiredService<YesSql.ISession>().SaveChangesAsync();
+        // Native creation is not platform authority. A lifecycle decision may have changed
+        // during that separate store operation. Recheck in the short platform transaction
+        // so deletion either precedes publication (reject) or follows it (revokes the client).
+        // A native-only orphan cannot authorize without this independent enabled registry.
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        foreach (var selected in tenants)
+        {
+            var current = await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == selected.Id, ct);
+            if (current.RetiredAt is not null || current.PurgedAt is not null || current.Subscription == SubscriptionStatus.PendingDeletion)
+                throw new TenantContractException("tenant_retired");
+        }
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
     }
 
     private async Task InMaintenanceAsync(Guid installationId, Func<IServiceProvider, Task> action, CancellationToken ct)

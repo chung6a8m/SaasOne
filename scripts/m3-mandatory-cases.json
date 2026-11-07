@@ -11,6 +11,7 @@
   "SaaS.UnitTests.M3RecoveryApplySqlTests.Restored_rights_never_survive_explicit_full_replacement_and_fresh_credentials(variant: \"OverrideDeny\")",
   "SaaS.UnitTests.M3RecoveryApplySqlTests.Restored_rights_never_survive_explicit_full_replacement_and_fresh_credentials(variant: \"RolePermission\")",
   "SaaS.UnitTests.M3RecoveryApplySqlTests.Restored_rights_never_survive_explicit_full_replacement_and_fresh_credentials(variant: \"UserRole\")",
+  "SaaS.UnitTests.M3RuntimeTests.Client_registration_rechecks_deletion_before_publishing_platform_authority",
   "SaaS.UnitTests.M3RuntimeTests.Crash_at_checkpoint_keeps_closed_and_explicit_retry_reconciles_under_new_fence(crash: EntitlementsCommitted)",
   "SaaS.UnitTests.M3RuntimeTests.Crash_at_checkpoint_keeps_closed_and_explicit_retry_reconciles_under_new_fence(crash: FeaturesReady)",
   "SaaS.UnitTests.M3RuntimeTests.Crash_at_checkpoint_keeps_closed_and_explicit_retry_reconciles_under_new_fence(crash: GateClosed)",
