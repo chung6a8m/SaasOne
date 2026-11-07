@@ -109,9 +109,9 @@ public sealed class M3SqlTests
     {
         await using var target = await ReadyAsync();
         await using (var sql = await SqlOperations.OpenAsync(target.Connection, Ct))
-            await SqlOperations.ExecuteAsync(sql, "CREATE TRIGGER [audit].[RejectFixtureAudit] ON [audit].[Events] AFTER INSERT AS THROW 51000, 'fixture_audit_failure', 1;", Ct);
+            await SqlOperations.ExecuteAsync(sql, "ALTER TABLE [audit].[Events] ADD CONSTRAINT [CK_FixtureRejectAudit] CHECK ([Action] <> 'AclChanged');", Ct);
         var role = Guid.NewGuid();
-        await Assert.ThrowsAsync<DbUpdateException>(() => new TenantTransactionCoordinator(target.Connection).ExecuteAsync(target.Id, 1, async (transaction, ct) =>
+        var failure = await Assert.ThrowsAsync<DbUpdateException>(() => new TenantTransactionCoordinator(target.Connection).ExecuteAsync(target.Id, 1, async (transaction, ct) =>
         {
             await using var access = AccessDbContext.Open(transaction.Connection);
             await access.Database.UseTransactionAsync(transaction.Transaction, ct);
@@ -120,6 +120,7 @@ public sealed class M3SqlTests
             await TenantAuditWriter.AppendAsync(transaction, Entry(target.Id, Guid.NewGuid()), ct);
             return true;
         }, Ct));
+        Assert.Equal(547, Assert.IsType<SqlException>(failure.InnerException).Number);
         await using var verify = AccessDbContext.Open(target.Connection);
         await using var audits = AuditDbContext.Open(target.Connection);
         Assert.False(await verify.Roles.AnyAsync(x => x.Id == role, Ct));

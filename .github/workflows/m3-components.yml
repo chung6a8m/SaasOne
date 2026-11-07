@@ -1,0 +1,37 @@
+name: M3 SQL components
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: m3-components-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sql:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Locked build and genuine SQL component suites
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet restore SaasOne.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { throw 'locked restore failed' }
+          dotnet build SaasOne.slnx -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+          ./scripts/m3-sql-fixture.ps1
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m3-components-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          if-no-files-found: error
