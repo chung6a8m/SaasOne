@@ -54,7 +54,7 @@ public sealed class AuditDbContext(DbContextOptions<AuditDbContext> options) : D
 
 public sealed class AuditDesignTimeFactory : IDesignTimeDbContextFactory<AuditDbContext>
 {
-    public AuditDbContext CreateDbContext(string[] args) => AuditDbContext.Open("Server=localhost;Database=saas_design_only;Integrated Security=True");
+    public AuditDbContext CreateDbContext(string[] args) => AuditDbContext.Open(SaaS.Abstractions.Tenancy.BundleConnection.ForDesignTime("Server=localhost;Database=saas_design_only;Integrated Security=True"));
 }
 
 /// <summary>Never owns or commits a separate connection/transaction. The caller commits the complete unit.</summary>

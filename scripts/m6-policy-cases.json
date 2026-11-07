@@ -1,0 +1,8 @@
+[
+  "SaaS.UnitTests.M6ManifestTests.Alpha_backup_cannot_be_selected_for_Delta",
+  "SaaS.UnitTests.M6ManifestTests.Artifact_hash_is_checked_before_any_bundle_is_available",
+  "SaaS.UnitTests.M6ManifestTests.Backup_manifest_authenticates_origin_and_detects_mutation",
+  "SaaS.UnitTests.M6ManifestTests.Backup_rejects_mixed_or_partial_chains_and_missing_identity",
+  "SaaS.UnitTests.M6ManifestTests.Release_rejects_duplicate_migration_owners_and_unordered_migrations",
+  "SaaS.UnitTests.M6ManifestTests.Release_rejects_traversal_duplicate_paths_and_missing_bundle"
+]

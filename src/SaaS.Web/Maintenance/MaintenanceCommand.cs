@@ -13,7 +13,9 @@ public static class MaintenanceCommand
         try
         {
             var service = new TenancyProvisioning(new TenancyConnections(), new OrchardMaintenance());
-            if (args.Length > 0 && args[0].StartsWith("identity-", StringComparison.Ordinal))
+            if (args.Length > 0 && M6MaintenanceCommand.Handles(args[0]))
+                await M6MaintenanceCommand.ExecuteAsync(args, cancellationToken);
+            else if (args.Length > 0 && args[0].StartsWith("identity-", StringComparison.Ordinal))
                 await IdentityMaintenanceCommand.ExecuteAsync(args, cancellationToken);
             else if (args.Length > 0 && (args[0] == "access-install" || args[0].StartsWith("ops-", StringComparison.Ordinal)))
                 await M3MaintenanceCommand.ExecuteAsync(args, cancellationToken);

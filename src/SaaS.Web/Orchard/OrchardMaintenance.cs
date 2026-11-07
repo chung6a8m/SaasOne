@@ -46,6 +46,21 @@ public sealed class OrchardMaintenance : IOrchardMaintenance
         return result;
     }
 
+    /// <summary>Upgrade a proven installed profile, never reseed missing native history.</summary>
+    public async Task<OrchardBaseline> UpgradeAsync(string shell, string prefix, Guid tenantId, string connection, CancellationToken cancellationToken)
+    {
+        // M6 keeps the native foundation version unchanged. Unknown or missing history is corruption.
+        await FoundationProfile.ReadSnapshotAsync(connection, cancellationToken);
+        await InShellAsync(shell, prefix, tenantId, connection, async provider =>
+        {
+            var descriptor = await provider.GetRequiredService<IShellDescriptorManager>().GetShellDescriptorAsync()
+                ?? throw new TenantContractException("orchard_descriptor_missing");
+            FoundationProfile.VerifyFeatures(descriptor.Features.Select(feature => feature.Id));
+            await provider.GetRequiredService<IDataMigrationManager>().UpdateAllFeaturesAsync();
+        }, cancellationToken);
+        return await VerifyAsync(shell, prefix, tenantId, connection, cancellationToken);
+    }
+
     private static async Task InShellAsync(string name, string prefix, Guid id, string connection, Func<IServiceProvider, Task> action, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -51,7 +51,7 @@ internal static class ResourceOperationsModel
     internal static void Configure(ModelBuilder model)
     {
         var operation = model.Entity<ResourceOperation>();
-        operation.ToTable("ResourceOperations", table => table.HasCheckConstraint("CK_ResourceOperation", "[Kind] IN (3,5,7) AND [Fence] > 0 AND [ExpectedRegistryVersion] > 0 AND [AuthorizationGeneration] > 0 AND [Checkpoint] BETWEEN 0 AND 8"));
+        operation.ToTable("ResourceOperations", table => table.HasCheckConstraint("CK_ResourceOperation", "[Kind] IN (3,4,5,7) AND [Fence] > 0 AND [ExpectedRegistryVersion] > 0 AND [AuthorizationGeneration] > 0 AND [Checkpoint] BETWEEN 0 AND 8"));
         operation.HasKey(x => x.Id);
         operation.Property(x => x.Id).ValueGeneratedNever();
         operation.Property(x => x.Fence).IsConcurrencyToken();

@@ -626,7 +626,7 @@ namespace SaaS.Tenancy.Migrations.Platform
 
                     b.ToTable("ResourceOperations", "platform", t =>
                         {
-                            t.HasCheckConstraint("CK_ResourceOperation", "[Kind] IN (3,5,7) AND [Fence] > 0 AND [ExpectedRegistryVersion] > 0 AND [AuthorizationGeneration] > 0 AND [Checkpoint] BETWEEN 0 AND 8");
+                            t.HasCheckConstraint("CK_ResourceOperation", "[Kind] IN (3,4,5,7) AND [Fence] > 0 AND [ExpectedRegistryVersion] > 0 AND [AuthorizationGeneration] > 0 AND [Checkpoint] BETWEEN 0 AND 8");
                         });
                 });
 
