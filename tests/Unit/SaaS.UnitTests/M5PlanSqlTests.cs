@@ -173,9 +173,21 @@ public sealed class M5PlanSqlTests(M1SqlFixture fixture)
             {
                 if (stage == ResourceCheckpoint.GatePrepared) await new IdentityOperations(new()).SetTenantAsync(Alpha.Id, state, current.ExpiresAt, ct);
             });
-            await Assert.ThrowsAsync<TenantContractException>(() => maintenance.Operations.ChangePlanAsync(Alpha.Id, Guid.NewGuid(), current.RegistryVersion, "Approval", Ct));
-            var changed = await RegistrationAsync(); Assert.Equal(state, changed.Subscription);
-            Assert.False(TenantPolicy.IsOperational(changed.Status(), DateTimeOffset.UtcNow)); Assert.NotEqual(OperationStatus.None, changed.Operation);
+            try
+            {
+                await Assert.ThrowsAsync<TenantContractException>(() => maintenance.Operations.ChangePlanAsync(Alpha.Id, Guid.NewGuid(), current.RegistryVersion, "Approval", Ct));
+                var changed = await RegistrationAsync(); Assert.Equal(state, changed.Subscription);
+                Assert.False(TenantPolicy.IsOperational(changed.Status(), DateTimeOffset.UtcNow)); Assert.NotEqual(OperationStatus.None, changed.Operation);
+            }
+            finally
+            {
+                // Fixture cleanup only: the shared HTTP fixture cannot use the public lifecycle
+                // operation to reactivate a tombstone. Preserve that production prohibition.
+                await using var cleanup = TenancyConnections.PlatformContext(Environment.PlatformAdmin);
+                var tenant = await cleanup.Tenants.SingleAsync(x => x.Id == Alpha.Id, CancellationToken.None);
+                tenant.Subscription = current.Subscription;
+                await cleanup.SaveChangesAsync(CancellationToken.None);
+            }
         }
     }
     [Fact]
