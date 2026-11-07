@@ -25,7 +25,7 @@ public sealed class M4OrderListSqlTests
         using (var queries = new OrdersReadCounter(h.Target.Connection))
         {
             var page = await h.Service().ListAsync(0, Ct);
-            Assert.Equal(50, page.Items.Count);
+            Assert.Equal(50, page.Items.Length);
             Assert.True(page.HasMore);
             Assert.Equal(rows.Take(50).Select(x => x.Id), page.Items.Select(x => x.Id));
             // Includes the ID query and all integrity reads, regardless of page size.
