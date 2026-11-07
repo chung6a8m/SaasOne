@@ -179,7 +179,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
     }
     private static async Task<byte[]> ReadBoundedAsync(HttpContext context, CancellationToken ct)
     {
-        const int limit = 16384;
+        const int limit = 32768;
         if (context.Request.ContentLength > limit) throw Invalid();
         using var buffer = new MemoryStream(); var chunk = new byte[4096]; int count;
         while ((count = await context.Request.Body.ReadAsync(chunk.AsMemory(), ct)) > 0)

@@ -89,7 +89,9 @@ public sealed partial class M4HttpTests
         }
         finally
         {
-            await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'orders.Orders.HiddenMarker', 'ApprovalRequired', 'COLUMN'; ALTER TABLE [orders].[Orders] ADD CONSTRAINT [CK_OrderState] CHECK ([Id] <> '00000000-0000-0000-0000-000000000000' AND [CreatedBy] <> '00000000-0000-0000-0000-000000000000' AND [Revision] > 0 AND [Amount] >= 0 AND [Status] IN (1,2,3,4) AND ([Status] NOT IN (2,3) OR [ApprovalRequired] = 1));", Ct);
+            await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'orders.Orders.HiddenMarker', 'ApprovalRequired', 'COLUMN';", Ct);
+            // Compile the restored CHECK only after the rename has completed in its own SQL batch.
+            await SqlOperations.ExecuteAsync(sql, "ALTER TABLE [orders].[Orders] ADD CONSTRAINT [CK_OrderState] CHECK ([Id] <> '00000000-0000-0000-0000-000000000000' AND [CreatedBy] <> '00000000-0000-0000-0000-000000000000' AND [Revision] > 0 AND [Amount] >= 0 AND [Status] IN (1,2,3,4) AND ([Status] NOT IN (2,3) OR [ApprovalRequired] = 1));", Ct);
         }
     }
     [Fact]

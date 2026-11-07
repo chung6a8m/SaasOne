@@ -139,7 +139,7 @@ public sealed partial class M4HttpTests
         using var browser = http.NewBrowser(); await LoginAsync(http, browser); var token = http.CapturedTokens["alpha"].AccessToken;
         var valid = JsonSerializer.Serialize(M4PolicyTests.Draft, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var invalid = new[] { valid[..^1] + ",\"approvalRequired\":false}", valid[..^1] + ",\"tenantId\":\"" + http.Tenant("beta").Id + "\"}",
-            valid[..^1] + ",\"createdBy\":\"" + Guid.NewGuid() + "\"}", valid[..^1] + ",\"status\":4}", valid[..^1] + ",\"amount\":99}", "{}", new string(' ', 17000) + valid };
+            valid[..^1] + ",\"createdBy\":\"" + Guid.NewGuid() + "\"}", valid[..^1] + ",\"status\":4}", valid[..^1] + ",\"amount\":99}", "{}", new string(' ', 33000) + valid };
         foreach (var body in invalid)
         {
             using var response = await RawAsync(http, token, body, "strict-key");
