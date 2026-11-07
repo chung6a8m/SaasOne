@@ -5,9 +5,9 @@ using SaaS.Tenancy.Operations;
 namespace SaaS.Web.Access;
 
 /// <summary>Private maintenance composition; never registered in an HTTP service container.</summary>
-public sealed class AccessMaintenance(TenancyConnections connections)
+public sealed class AccessMaintenance(TenancyConnections connections, Func<ResourceCheckpoint, CancellationToken, Task>? progress = null)
 {
-    public TenantOperations Operations => new(connections, new ApplicationPlanReconciler(connections), new FoundationObligationReader());
+    public TenantOperations Operations => new(connections, new ApplicationPlanReconciler(connections), new FoundationObligationReader(), progress: progress);
     public async Task<ResourceResult> InstallAsync(Guid tenant, Guid operation, long version, CancellationToken ct)
     {
         await using var db = TenancyConnections.PlatformContext(connections.Platform("operator"));

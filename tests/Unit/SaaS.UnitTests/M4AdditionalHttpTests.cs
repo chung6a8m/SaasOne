@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using SaaS.Abstractions.Tenancy;
 using SaaS.AccessControl;
 using SaaS.Orders;
+using SaaS.OrderApprovals;
 using SaaS.Orders.Data;
 using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Operations;
@@ -62,16 +63,16 @@ public sealed partial class M4HttpTests
     {
         await using var setup = await HttpAsync();
         await using var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct);
-        await SqlOperations.ExecuteAsync(sql, "UPDATE [tenancy].[ApplicationProfile] SET [Version] = 3", Ct);
+        await SqlOperations.ExecuteAsync(sql, "UPDATE [tenancy].[ApplicationProfile] SET [Version] = 4", Ct);
         try
         {
             var current = await CurrentRegistrationAsync();
             var error = await Assert.ThrowsAsync<TenantContractException>(() => new AccessMaintenance(new()).InstallAsync(Alpha.Id, Guid.NewGuid(), current.RegistryVersion, Ct));
             Assert.Equal("obligations_unknown", error.Code);
             Assert.False((await TenantWriteGate.ReadAsync(sql, null, Ct)).IsOpen);
-            Assert.Equal(3, Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT [Version] FROM [tenancy].[ApplicationProfile]", Ct)));
+            Assert.Equal(4, Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT [Version] FROM [tenancy].[ApplicationProfile]", Ct)));
         }
-        finally { await SqlOperations.ExecuteAsync(sql, "UPDATE [tenancy].[ApplicationProfile] SET [Version] = 2", Ct); }
+        finally { await SqlOperations.ExecuteAsync(sql, "UPDATE [tenancy].[ApplicationProfile] SET [Version] = 3", Ct); }
     }
     [Fact]
     public async Task Installed_Orders_with_a_missing_marker_stays_closed_instead_of_runtime_repair()
@@ -101,11 +102,11 @@ public sealed partial class M4HttpTests
         await using var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct);
         await using (var orders = OrdersDbContext.Open(Environment.CustomerAdmin(Alpha))) Assert.Empty(await orders.Orders.ToArrayAsync(Ct));
         var legacy = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("FoundationM3:v1\nAccess.Manage:Core:Nondelegable\nWorkspace.View:Core\nWorkspace.Approval:Approval\nProfile.ReadOwn:Core:Owner\nStandard")));
-        await SqlOperations.ExecuteAsync(sql, "DROP TABLE [orders].[Receipts]; DROP TABLE [orders].[Revisions]; DROP TABLE [orders].[Orders]; DROP TABLE [orders].[__EFMigrationsHistory]; UPDATE [tenancy].[ApplicationProfile] SET [Version] = 1, [ManifestHash] = @hash;", Ct, ("@hash", legacy));
+        await SqlOperations.ExecuteAsync(sql, "DROP TABLE [approvals].[Decisions]; DROP TABLE [approvals].[Requests]; DROP TABLE [approvals].[__EFMigrationsHistory]; DROP TABLE [orders].[Receipts]; DROP TABLE [orders].[Revisions]; DROP TABLE [orders].[Orders]; DROP TABLE [orders].[__EFMigrationsHistory]; UPDATE [tenancy].[ApplicationProfile] SET [Version] = 1, [ManifestHash] = @hash;", Ct, ("@hash", legacy));
         var current = await CurrentRegistrationAsync();
         await new AccessMaintenance(new()).InstallAsync(Alpha.Id, Guid.NewGuid(), current.RegistryVersion, Ct);
         await using var db = OrdersDbContext.Open(Environment.CustomerAdmin(Alpha)); await TenancyConnections.VerifySchemaAsync(db, Ct);
-        Assert.Equal(2, Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT [Version] FROM [tenancy].[ApplicationProfile]", Ct)));
+        Assert.Equal(3, Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT [Version] FROM [tenancy].[ApplicationProfile]", Ct)));
         Assert.True((await TenantWriteGate.ReadAsync(sql, null, Ct)).IsOpen);
         using var browser = setup.Http.NewBrowser(); await LoginAsync(setup.Http, browser);
         using var visible = await ApiAsync(setup.Http, setup.Http.CapturedTokens["alpha"].AccessToken, "/alpha/api/v1/orders");
@@ -131,8 +132,8 @@ public sealed partial class M4HttpTests
                 var current = await platform.Tenants.AsNoTracking().SingleAsync(x => x.Id == Alpha.Id, token);
                 return new(Alpha.Id, actor, current.AuthorizationGeneration, current.RegistryVersion, ApplicationAccessProfile.Entitlements(current.Plan));
             }, ct);
-            return new(access.Current, access.Snapshot, "private-marker-fixture");
-        }, new MarkerOnlyFixture());
+            return new(access.Current, access.Snapshot, "private-approval-test");
+        }, new OrderApprovalHandler());
         var draft = (await service.ExecuteAsync(new(OrderAction.Create, "plan-create", Draft: M4PolicyTests.Draft), Ct)).Order;
         var pending = (await service.ExecuteAsync(M4PolicyTests.Command(draft), Ct)).Order;
         async Task DemandPlanAsync(string expected)
@@ -158,12 +159,5 @@ public sealed partial class M4HttpTests
     {
         await using var db = TenancyConnections.PlatformContext(Environment.PlatformAdmin);
         return await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == Alpha.Id, Ct);
-    }
-    // M4 only supplies the extension contract. This fixture records no M5-owned tables; durable hook atomicity is covered by M4OrderSqlTests.
-    private sealed class MarkerOnlyFixture : IOrderApprovalHandler
-    {
-        public Task DemandReadyAsync(TenantTransaction transaction, CancellationToken ct) => Task.CompletedTask;
-        public Task SubmittedAsync(OrderApprovalSubmission submission, TenantTransaction transaction, CancellationToken ct) => Task.CompletedTask;
-        public Task DecidedAsync(OrderApprovalDecision decision, TenantTransaction transaction, CancellationToken ct) => Task.CompletedTask;
     }
 }

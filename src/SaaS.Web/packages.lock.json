@@ -1611,6 +1611,13 @@
           "SaaS.Tenancy": "[1.0.0, )"
         }
       },
+      "saas.orderapprovals": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )",
+          "SaaS.Orders": "[1.0.0, )"
+        }
+      },
       "saas.orders": {
         "type": "Project",
         "dependencies": {

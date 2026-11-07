@@ -188,14 +188,15 @@ public sealed partial class M4HttpTests
         using var retry = await ApiAsync(http, token, "/alpha/api/v1/orders", "create-http", M4PolicyTests.Draft); Assert.True((await ResultAsync(retry, HttpStatusCode.Created)).Replayed);
     }
     [Fact]
-    public async Task Native_approval_plan_without_handler_is_unavailable_not_standard_confirmation()
+    public async Task Native_approval_plan_with_real_handler_stays_pending_not_standard_confirmation()
     {
         await using var setup = await HttpAsync(approval: true); var http = setup.Http;
         using var browser = http.NewBrowser(); await LoginAsync(http, browser); var token = http.CapturedTokens["alpha"].AccessToken;
         var order = await CreateAsync(http, token);
         using var submit = await ApiAsync(http, token, "/alpha/api/v1/orders/" + order.Id + "/submit", "approval-submit", Expected(order));
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, submit.StatusCode);
-        using var read = await ApiAsync(http, token, "/alpha/api/v1/orders/" + order.Id); Assert.Equal(order, await read.Content.ReadFromJsonAsync<OrderView>(Ct));
+        var pending = (await ResultAsync(submit, HttpStatusCode.OK)).Order;
+        Assert.Equal(OrderStatus.PendingApproval, pending.Status); Assert.True(pending.ApprovalRequired);
+        using var read = await ApiAsync(http, token, "/alpha/api/v1/orders/" + order.Id); Assert.Equal(pending, await read.Content.ReadFromJsonAsync<OrderView>(Ct));
     }
     [Fact]
     public async Task Native_runtime_cannot_delete_history_rewrite_receipts_administer_SQL_or_open_approval_routes()
@@ -214,8 +215,8 @@ public sealed partial class M4HttpTests
         await using var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct);
         await SqlOperations.ExecuteAsync(sql, $"{(allow ? "GRANT" : "DENY")} SELECT ON [access].[Roles] TO [saas_rt_{Alpha.Id:N}]", Ct);
     }
-    private static object Expected(OrderView order) => new { expectedRevision = order.Revision, expectedVersion = order.Version };
-    private static async Task LoginAsync(IdentityHttpFixture http, HttpBrowser browser)
+    internal static object Expected(OrderView order) => new { expectedRevision = order.Revision, expectedVersion = order.Version };
+    internal static async Task LoginAsync(IdentityHttpFixture http, HttpBrowser browser)
     {
         await browser.LoginAsync(http);
         foreach (var slug in new[] { "alpha", "beta" })
@@ -226,17 +227,17 @@ public sealed partial class M4HttpTests
         using var api = await ApiAsync(http, token, "/alpha/api/v1/orders"); Assert.Equal(status, api.StatusCode);
         using var web = await browser.GetAsync("/alpha/orders"); Assert.Equal(status, web.StatusCode);
     }
-    private static async Task<OrderView> CreateAsync(IdentityHttpFixture http, string token)
+    internal static async Task<OrderView> CreateAsync(IdentityHttpFixture http, string token)
     {
         using var response = await ApiAsync(http, token, "/alpha/api/v1/orders", "create-http", M4PolicyTests.Draft);
         return (await ResultAsync(response, HttpStatusCode.Created)).Order;
     }
-    private static async Task<OrderCommandResult> ResultAsync(HttpResponseMessage response, HttpStatusCode status)
+    internal static async Task<OrderCommandResult> ResultAsync(HttpResponseMessage response, HttpStatusCode status)
     {
         Assert.Equal(status, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<OrderCommandResult>(Ct))!;
     }
-    private static async Task<HttpResponseMessage> ApiAsync(IdentityHttpFixture http, string token, string path, string? key = null, object? body = null)
+    internal static async Task<HttpResponseMessage> ApiAsync(IdentityHttpFixture http, string token, string path, string? key = null, object? body = null)
     {
         using var client = http.NewClient(); using var request = new HttpRequestMessage(body is null ? HttpMethod.Get : HttpMethod.Post, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

@@ -1,0 +1,51 @@
+name: M5 OrderApprovals full acceptance
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m5-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Retain exact tracked source identity
+        run: |
+          mkdir -p artifacts/source
+          git rev-parse HEAD > artifacts/source/commit.txt
+          git archive --format=tar.gz --output=artifacts/source/source.tar.gz HEAD
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m5-source-${{ github.sha }}
+          path: artifacts/source
+          if-no-files-found: error
+          retention-days: 7
+  acceptance:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Inherited baseline and mandatory M5 gate
+        shell: pwsh
+        run: |
+          ./scripts/check-m5.ps1
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m5-verification-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          if-no-files-found: error

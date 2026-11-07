@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Antiforgery;
 using SaaS.AccessControl;
 using SaaS.Identity;
 using SaaS.Orders;
+using SaaS.OrderApprovals;
 using SaaS.Web.Access;
 namespace SaaS.Web.Orders;
 
@@ -18,6 +19,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
     private sealed record Route(bool Api, Guid? Id = null, OrderAction? Action = null, bool New = false);
     private sealed record EditBody(long ExpectedRevision, string ExpectedVersion, OrderDraft Draft);
     private sealed record SubmitBody(long ExpectedRevision, string ExpectedVersion);
+    private sealed record RejectBody(long ExpectedRevision, string ExpectedVersion, string Reason);
     public bool Matches(string path, string method) => ParseRoute(path, method) is not null;
     private static Route? ParseRoute(string path, string method)
     {
@@ -36,7 +38,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
         if (!Guid.TryParseExact(parts[0], "D", out var id) || id == Guid.Empty) return null;
         if (parts.Length == 1 && HttpMethods.IsGet(method)) return new(api, id);
         if (parts.Length != 2 || !HttpMethods.IsPost(method)) return null;
-        return parts[1] switch { "edit" => new(api, id, OrderAction.Edit), "submit" => new(api, id, OrderAction.Submit), _ => null };
+        return parts[1] switch { "edit" => new(api, id, OrderAction.Edit), "submit" => new(api, id, OrderAction.Submit), "approve" => new(api, id, OrderAction.Approve), "reject" => new(api, id, OrderAction.Reject), _ => null };
     }
     public async Task HandleAsync(HttpContext context)
     {
@@ -45,7 +47,9 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
         {
             var route = ParseRoute(context.Request.Path.Value ?? "", context.Request.Method) ?? throw new AccessDeniedException(404, "route_not_found");
             var authority = new ApplicationRequestAuthority(context);
-            _ = await authority.ReadAsync(ct); // Authentication precedes body processing; service rechecks under its locks.
+            var initial = await authority.ReadAsync(ct); // Service rechecks current authority under its locks.
+            if (route.Action is OrderAction.Approve or OrderAction.Reject && !initial.Current.Entitlements.Contains("Approval"))
+                throw new AccessDeniedException(404, "route_not_found");
             var service = new OrderService(authority.Connection, authority.Tenant.TenantId, ApplicationAccessProfile.Catalog,
                 async (tx, token) =>
                 {
@@ -56,7 +60,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
                         return identity.Current;
                     }, token);
                     return new(access.Current, access.Snapshot, identity!.ClientId);
-                }, clock: context.RequestServices.GetRequiredService<TimeProvider>(), correlationId: context.TraceIdentifier);
+                }, new OrderApprovalHandler(context.RequestServices.GetRequiredService<TimeProvider>()), clock: context.RequestServices.GetRequiredService<TimeProvider>(), correlationId: context.TraceIdentifier);
             context.Response.Headers.CacheControl = "no-store";
             if (HttpMethods.IsGet(context.Request.Method))
             {
@@ -69,7 +73,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
                 {
                     var order = await service.GetAsync(id, ct);
                     if (route.Api) await context.Response.WriteAsJsonAsync(order, Json, ct);
-                    else await OrdersPages.DetailAsync(context, order);
+                    else await OrdersPages.DetailAsync(context, order, order.Status == OrderStatus.PendingApproval && await service.CanDecideAsync(id, ct));
                 }
                 else
                 {
@@ -125,9 +129,15 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
             var body = root.Deserialize<EditBody>(Json) ?? throw Invalid();
             return new(OrderAction.Edit, keys[0]!, route.Id, body.ExpectedRevision, body.ExpectedVersion, body.Draft);
         }
+        if (route.Action == OrderAction.Reject)
+        {
+            Shape(root, "expectedRevision", "expectedVersion", "reason");
+            var body = root.Deserialize<RejectBody>(Json) ?? throw Invalid();
+            return new(OrderAction.Reject, keys[0]!, route.Id, body.ExpectedRevision, body.ExpectedVersion, Reason: body.Reason);
+        }
         Shape(root, "expectedRevision", "expectedVersion");
         var submit = root.Deserialize<SubmitBody>(Json) ?? throw Invalid();
-        return new(OrderAction.Submit, keys[0]!, route.Id, submit.ExpectedRevision, submit.ExpectedVersion);
+        return new(route.Action!.Value, keys[0]!, route.Id, submit.ExpectedRevision, submit.ExpectedVersion);
     }
     private static async Task<OrderCommand> WebCommandAsync(HttpContext context, Route route, CancellationToken ct)
     {
@@ -143,6 +153,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
             var allowed = new HashSet<string>(["__RequestVerificationToken", "idempotencyKey"], StringComparer.Ordinal);
             if (route.Action != OrderAction.Create) allowed.UnionWith(["expectedRevision", "expectedVersion"]);
             if (route.Action is OrderAction.Create or OrderAction.Edit) allowed.UnionWith(["number", "customerName", "amount", "currency", "notes"]);
+            if (route.Action == OrderAction.Reject) allowed.Add("reason");
             if (form.Files.Count != 0 || form.Count != allowed.Count || form.Any(x => !allowed.Contains(x.Key) || x.Value.Count != 1)) throw Invalid();
             string Value(string key) => form[key].Count == 1 ? form[key].ToString() : throw Invalid();
             long? revision = null; string? version = null; OrderDraft? draft = null;
@@ -156,7 +167,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
                 if (!decimal.TryParse(Value("amount"), NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var amount)) throw Invalid();
                 draft = new(Value("number"), Value("customerName"), amount, Value("currency"), Value("notes"));
             }
-            return new(route.Action!.Value, Value("idempotencyKey"), route.Id, revision, version, draft);
+            return new(route.Action!.Value, Value("idempotencyKey"), route.Id, revision, version, draft, route.Action == OrderAction.Reject ? Value("reason") : null);
         }
         finally { context.Request.Body = original; }
     }

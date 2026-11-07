@@ -5,6 +5,7 @@
   <Project Path="src/Platform/SaaS.AccessControl/SaaS.AccessControl.csproj" />
   <Project Path="src/Platform/SaaS.Auditing/SaaS.Auditing.csproj" />
   <Project Path="src/Modules/SaaS.Orders/SaaS.Orders.csproj" />
+  <Project Path="src/Modules/SaaS.OrderApprovals/SaaS.OrderApprovals.csproj" />
   <Project Path="src/Themes/SaaS.Theme.App/SaaS.Theme.App.csproj" />
   <Project Path="src/SaaS.Web/SaaS.Web.csproj" />
   <Project Path="tools/SaaS.Build/SaaS.Build.csproj" />

@@ -8,6 +8,8 @@ using SaaS.AccessControl;
 using SaaS.AccessControl.Data;
 using SaaS.Auditing;
 using SaaS.Orders;
+using SaaS.OrderApprovals;
+using SaaS.OrderApprovals.Data;
 using SaaS.Orders.Data;
 using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Operations;
@@ -28,6 +30,11 @@ public static class ApplicationAccessProfile
     public static string Hash(string plan)
     {
         _ = Entitlements(plan);
+        return Digest("OrderApprovalsM5:v1\n" + OrdersHash(plan));
+    }
+    internal static string OrdersHash(string plan)
+    {
+        _ = Entitlements(plan);
         return Digest("OrdersM4:v2\n" + LegacyHash(plan) + "\n" + string.Join("\n", OrderPermissions.Definitions.Select(x => $"{x.Code}:{x.Entitlement}:{x.ResourceRule}:{x.Delegable}")));
     }
     internal static string LegacyHash(string plan) => Digest("FoundationM3:v1\nAccess.Manage:Core:Nondelegable\nWorkspace.View:Core\nWorkspace.Approval:Approval\nProfile.ReadOwn:Core:Owner\n" + plan);
@@ -38,9 +45,11 @@ public static class ApplicationAccessProfile
     {
         await using var tenancy = Open(connection); await using var access = AccessDbContext.Open(connection);
         await using var audit = AuditDbContext.Open(connection); await using var orders = OrdersDbContext.Open(connection);
-        foreach (var db in new DbContext[] { tenancy, access, audit, orders }) await TenancyConnections.VerifySchemaAsync(db, ct);
+        await using var approvals = ApprovalsDbContext.Open(connection);
+        foreach (var db in new DbContext[] { tenancy, access, audit, orders, approvals }) await TenancyConnections.VerifySchemaAsync(db, ct);
+        await ApprovalHistoryVerifier.DemandColumnsAsync(connection, null, ct);
         var profile = await tenancy.ApplicationProfile.AsNoTracking().SingleAsync(ct);
-        if (profile.Id != 1 || profile.TenantId != tenantId || profile.Version != 2 || profile.Plan != plan || profile.ManifestHash != Hash(plan))
+        if (profile.Id != 1 || profile.TenantId != tenantId || profile.Version != 3 || profile.Plan != plan || profile.ManifestHash != Hash(plan))
             throw new TenantContractException("application_profile_mismatch");
     }
     public static async Task DemandMembershipsAsync(TenancyConnections connections, string role, Guid tenantId,
@@ -67,12 +76,13 @@ internal sealed class FoundationObligationReader : IApprovalObligationReader
         {
             await using var tenancy = ApplicationAccessProfile.Open(connection); await using var access = AccessDbContext.Open(connection);
             await using var audit = AuditDbContext.Open(connection); await using var orders = OrdersDbContext.Open(connection);
+            await using var approvals = ApprovalsDbContext.Open(connection);
             var allowed = new HashSet<string>(StringComparer.Ordinal)
             {
                 "dbo.oc_Document", "dbo.oc_Identifiers", "dbo.oc_SaaSFoundation",
-                "tenancy.__EFMigrationsHistory", "access.__EFMigrationsHistory", "audit.__EFMigrationsHistory", "orders.__EFMigrationsHistory"
+                "tenancy.__EFMigrationsHistory", "access.__EFMigrationsHistory", "audit.__EFMigrationsHistory", "orders.__EFMigrationsHistory", "approvals.__EFMigrationsHistory"
             };
-            foreach (var db in new DbContext[] { tenancy, access, audit, orders })
+            foreach (var db in new DbContext[] { tenancy, access, audit, orders, approvals })
                 foreach (var table in db.Model.GetEntityTypes()) allowed.Add(table.GetSchema() + "." + table.GetTableName());
             var identity = await tenancy.Identity.AsNoTracking().SingleAsync(cancellationToken);
             if (identity.TenantId != tenant.TenantId) return new(ObligationState.Unknown, 0);
@@ -97,14 +107,24 @@ internal sealed class FoundationObligationReader : IApprovalObligationReader
                 var expectedHash = profile.Version switch
                 {
                     1 => ApplicationAccessProfile.LegacyHash(profile.Plan),
-                    2 => ApplicationAccessProfile.Hash(profile.Plan),
+                    2 => ApplicationAccessProfile.OrdersHash(profile.Plan),
+                    3 => ApplicationAccessProfile.Hash(profile.Plan),
                     _ => null
                 };
                 // A readable current schema cannot authorize downgrading an unknown future profile.
                 if (expectedHash is null || profile.ManifestHash != expectedHash) return new(ObligationState.Unknown, 0);
             }
             if (actual.Any(x => x.StartsWith("orders.", StringComparison.Ordinal)))
-                return await new OrdersObligationReader().ReadAsync(tenant, connection, cancellationToken);
+            {
+                var result = await new OrdersObligationReader().ReadAsync(tenant, connection, cancellationToken);
+                if (result.State == ObligationState.Unknown) return result;
+                if (actual.Any(x => x.StartsWith("approvals.", StringComparison.Ordinal)))
+                    await ApprovalHistoryVerifier.VerifyAsync(connection, cancellationToken);
+                else if (profile is { Version: >= 3 } || await orders.Orders.AnyAsync(x => x.ApprovalRequired, cancellationToken))
+                    return new(ObligationState.Unknown, 0); // Never invent decisions for pre-M5 fixture history.
+                return result;
+            }
+            if (actual.Any(x => x.StartsWith("approvals.", StringComparison.Ordinal))) return new(ObligationState.Unknown, 0);
             // Only the verified pre-Orders foundation can be empty. An installed M4 profile with missing schema is corruption.
             if (profile is { Version: >= 2 }) return new(ObligationState.Unknown, 0);
             return new(ObligationState.Clear, 0);
@@ -123,10 +143,11 @@ internal sealed class ApplicationPlanReconciler(TenancyConnections connections) 
         await tenancy.Database.MigrateAsync(ct);
         await using var access = AccessDbContext.Open(ownedConnection); await using var audit = AuditDbContext.Open(ownedConnection);
         await using var orders = OrdersDbContext.Open(ownedConnection);
+        await using var approvals = ApprovalsDbContext.Open(ownedConnection);
         var installed = await tenancy.ApplicationProfile.AsNoTracking().SingleOrDefaultAsync(ct);
-        if (installed is { Version: >= 2 } && (await new OrdersObligationReader().ReadAsync(tenant, ownedConnection, ct)).State == ObligationState.Unknown)
+        if (installed is { Version: >= 2 } && (await new FoundationObligationReader().ReadAsync(tenant, ownedConnection, ct)).State == ObligationState.Unknown)
             throw new TenantContractException("orders_recovery_required");
-        await access.Database.MigrateAsync(ct); await audit.Database.MigrateAsync(ct); await orders.Database.MigrateAsync(ct);
+        await access.Database.MigrateAsync(ct); await audit.Database.MigrateAsync(ct); await orders.Database.MigrateAsync(ct); await approvals.Database.MigrateAsync(ct);
         if (!await access.State.AnyAsync(ct))
         {
             if (await access.Roles.AnyAsync(ct) || await access.Assignments.AnyAsync(ct) || await access.UserGrants.AnyAsync(ct)
@@ -147,13 +168,14 @@ internal sealed class ApplicationPlanReconciler(TenancyConnections connections) 
         var profile = await db.ApplicationProfile.SingleOrDefaultAsync(ct);
         if (profile is null) { profile = new TenantApplicationProfile { TenantId = tenant.TenantId }; db.ApplicationProfile.Add(profile); }
         if (profile.TenantId != tenant.TenantId) throw new TenantContractException("application_identity_mismatch");
-        profile.Plan = targetPlan; profile.ManifestHash = ApplicationAccessProfile.Hash(targetPlan); profile.Version = 2;
+        profile.Plan = targetPlan; profile.ManifestHash = ApplicationAccessProfile.Hash(targetPlan); profile.Version = 3;
         await db.SaveChangesAsync(ct);
         await SqlOperations.ExecuteAsync((SqlConnection)ownedConnection, """
             DECLARE @principal nvarchar(258) = QUOTENAME(@login);
             DECLARE @ddl nvarchar(max) = N'GRANT SELECT ON SCHEMA::[access] TO ' + @principal + N';'
                 + N'GRANT SELECT ON SCHEMA::[audit] TO ' + @principal + N';'
                 + N'GRANT SELECT ON SCHEMA::[orders] TO ' + @principal + N';'
+                + N'GRANT SELECT ON SCHEMA::[approvals] TO ' + @principal + N';'
                 + N'GRANT SELECT ON SCHEMA::[tenancy] TO ' + @principal + N';'
                 + N'DENY INSERT, UPDATE, DELETE ON SCHEMA::[tenancy] TO ' + @principal + N';';
             SELECT @ddl = @ddl + N'GRANT INSERT, UPDATE, DELETE ON [access].' + QUOTENAME(name) + N' TO ' + @principal + N';'
@@ -170,7 +192,12 @@ internal sealed class ApplicationPlanReconciler(TenancyConnections connections) 
                 + N'DENY UPDATE, DELETE ON [orders].[Receipts] TO ' + @principal + N';'
                 + N'DENY INSERT, UPDATE, DELETE ON [access].[__EFMigrationsHistory] TO ' + @principal + N';'
                 + N'DENY INSERT, UPDATE, DELETE ON [audit].[__EFMigrationsHistory] TO ' + @principal + N';'
-                + N'DENY INSERT, UPDATE, DELETE ON [orders].[__EFMigrationsHistory] TO ' + @principal + N';';
+                + N'DENY INSERT, UPDATE, DELETE ON [orders].[__EFMigrationsHistory] TO ' + @principal + N';'
+                + N'GRANT INSERT ON [approvals].[Requests] TO ' + @principal + N';'
+                + N'GRANT INSERT ON [approvals].[Decisions] TO ' + @principal + N';'
+                + N'DENY UPDATE, DELETE ON [approvals].[Requests] TO ' + @principal + N';'
+                + N'DENY UPDATE, DELETE ON [approvals].[Decisions] TO ' + @principal + N';'
+                + N'DENY INSERT, UPDATE, DELETE ON [approvals].[__EFMigrationsHistory] TO ' + @principal + N';';
             EXEC sys.sp_executesql @ddl;
             """, ct, ("@login", "saas_rt_" + tenant.TenantId.ToString("N")));
     }

@@ -46,7 +46,7 @@ try {
             $results = Join-Path $root 'artifacts/test-results/m0'
             if (Test-Path $results) { Remove-Item $results -Recurse -Force }
             New-Item $results -ItemType Directory -Force | Out-Null
-            Invoke-Checked dotnet @('test', 'SaasOne.slnx', '--configuration', 'Release', '--no-build', '--filter', 'Category!=SqlM1&Category!=SqlM2&Category!=SqlM3&Category!=SqlM4', '--logger', 'trx', '--results-directory', 'artifacts/test-results/m0')
+            Invoke-Checked dotnet @('test', 'SaasOne.slnx', '--configuration', 'Release', '--no-build', '--filter', 'Category!=SqlM1&Category!=SqlM2&Category!=SqlM3&Category!=SqlM4&Category!=SqlM5', '--logger', 'trx', '--results-directory', 'artifacts/test-results/m0')
             $tool = 'tools/SaaS.Build/bin/Release/net10.0/SaaS.Build.dll'
             foreach ($check in @('architecture', 'hygiene', 'locks')) { Invoke-Checked dotnet @($tool, $check, $root) }
             $json = & dotnet $tool evidence $results

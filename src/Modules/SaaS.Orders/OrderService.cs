@@ -149,6 +149,22 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         return new OrderPage(items.Take(50).ToArray(), items.Count > 50);
     }, ct), ct);
 
+    /// <summary>A current resource-aware UI hint; commands always authorize again inside their own transaction.</summary>
+    public Task<bool> CanDecideAsync(Guid id, CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
+    {
+        var initial = await AccessAsync(tx, token);
+        await LockAsync(tx, ResourceLock(id), false, token);
+        var access = await AccessAsync(tx, token); SameIdentity(initial, access);
+        await using var db = OrdersDbContext.Open(tx.Connection);
+        await db.Database.UseTransactionAsync(tx.Transaction, token);
+        await TenancyConnections.VerifySchemaAsync(db, token);
+        var current = (await LoadAsync(db, id, token)).View();
+        OrderPermissions.RequireRead(catalog, access, current);
+        if (current.Status != OrderStatus.PendingApproval || approvalHandler is null) return false;
+        try { OrderPermissions.Require(catalog, access, OrderAction.Approve, current); return true; }
+        catch (AccessDeniedException error) when (error.StatusCode == 403 && error.Code is "permission_denied" or "self_approval_forbidden") { return false; }
+    }, ct), ct);
+
     public Task DemandCreateAsync(CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
     {
         OrderPermissions.Require(catalog, await AccessAsync(tx, token), OrderAction.Create, null);

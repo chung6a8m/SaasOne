@@ -51,7 +51,7 @@ internal static class OrdersPages
         if (page.HasMore && index < 1000) html.Append("<a rel=\"next\" href=\"").Append(E(context.Request.PathBase + "/orders?page=" + Number(index + 1))).Append("\">Next</a>");
         return FinishAsync(context, html.Append("</nav>"));
     }
-    internal static Task DetailAsync(HttpContext context, OrderView order)
+    internal static Task DetailAsync(HttpContext context, OrderView order, bool canDecide = false)
     {
         var html = Start(context, order.Number);
         html.Append("<dl><dt>Customer</dt><dd>").Append(E(order.CustomerName)).Append("</dd><dt>Amount</dt><dd>")
@@ -76,6 +76,18 @@ internal static class OrdersPages
             else html.Append("<p>Save the revised draft before submitting it again. The approval obligation is retained.</p>");
         }
         else html.Append("<p>This revision cannot be edited or submitted again.</p>");
+        if (order.Status == OrderStatus.PendingApproval && canDecide)
+        {
+            var csrf = Csrf(context);
+            var expected = Hidden("expectedRevision", Number(order.Revision)) + Hidden("expectedVersion", order.Version);
+            var path = context.Request.PathBase + "/orders/" + order.Id.ToString("D");
+            html.Append("<h2>Decision</h2><p>A decision applies only to this submitted revision.</p><form method=\"post\" action=\"")
+                .Append(E(path + "/approve")).Append("\">").Append(csrf).Append(expected)
+                .Append(Hidden("idempotencyKey", Guid.NewGuid().ToString("N"))).Append("<button type=\"submit\">Approve order</button></form>")
+                .Append("<form method=\"post\" action=\"").Append(E(path + "/reject")).Append("\">").Append(csrf).Append(expected)
+                .Append(Hidden("idempotencyKey", Guid.NewGuid().ToString("N")))
+                .Append("<label for=\"reason\">Reason for rejection (plain text)</label><textarea id=\"reason\" name=\"reason\" maxlength=\"1000\" required></textarea><button type=\"submit\">Reject order</button></form>");
+        }
         return FinishAsync(context, html);
     }
     private static void Fields(StringBuilder html, OrderDraft draft)
