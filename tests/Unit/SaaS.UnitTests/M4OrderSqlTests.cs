@@ -87,7 +87,7 @@ public sealed class M4OrderSqlTests
         await using var h = await M4SqlHarness.CreateAsync(Ct);
         var command = Create();
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => h.Service().ExecuteAsync(command, Ct)));
-        Assert.Single(results.Where(x => !x.Replayed));
+        Assert.Single(results, x => !x.Replayed);
         Assert.All(results, x => Assert.Equal(results[0].Order, x.Order));
         await h.CountsAsync(1, 1, 1, Ct);
     }
