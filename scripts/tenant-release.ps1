@@ -15,8 +15,8 @@ try {
     $tenants = [Collections.Generic.HashSet[guid]]::new(); $operations = [Collections.Generic.HashSet[guid]]::new()
     foreach ($item in $items) {
         $tenant = [guid]::ParseExact([string]$item.tenantId,'D'); $operation = [guid]::ParseExact([string]$item.operationId,'D')
-        if ($tenant -eq [guid]::Empty -or $operation -eq [guid]::Empty -or -not $tenants.Add($tenant) -or -not $operations.Add($operation)
-            -or [string]$item.expectedRegistryVersion -notmatch '^[1-9][0-9]*$') { throw 'release_request_invalid' }
+        if ($tenant -eq [guid]::Empty -or $operation -eq [guid]::Empty -or -not $tenants.Add($tenant) -or -not $operations.Add($operation) -or
+            [string]$item.expectedRegistryVersion -notmatch '^[1-9][0-9]*$') { throw 'release_request_invalid' }
     }
     if ([string]::IsNullOrWhiteSpace($Output)) { $Output = Join-Path (Split-Path $PSScriptRoot -Parent) ('artifacts/release-execution/' + [guid]::NewGuid().ToString('N')) }
     $Output = [IO.Path]::GetFullPath($Output)
