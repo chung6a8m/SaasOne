@@ -124,6 +124,10 @@ public sealed class AccessEndpoints : ITenantApplicationEndpoints
             var permission = path.EndsWith("/approval", StringComparison.Ordinal) ? "Workspace.Approval" : "Workspace.View";
             if (ProfileId(path) is { } profileId)
             {
+                // Authenticate and reject non-owners before any target lookup: otherwise the error
+                // becomes a membership oracle. RequireAsync below still rechecks current ACL policy.
+                var actor = await Authority(ct);
+                if (actor.UserId != profileId) throw new AccessDeniedException(403, "permission_denied");
                 // The resource is a current platform membership, not a client-supplied owner attribute.
                 await using var platform = TenancyConnections.PlatformContext(connections.Platform("runtime"));
                 var member = await platform.IdentityMemberships.AsNoTracking().SingleOrDefaultAsync(x => x.TenantId == tenant.TenantId && x.GlobalUserId == profileId && x.Active, ct);

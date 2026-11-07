@@ -180,7 +180,8 @@ public sealed partial class M3RuntimeTests
     private async Task<IDisposable> UseSuccessorRecoveryOperatorAsync()
     {
         var actor = "saas_recovery_" + Guid.NewGuid().ToString("N");
-        var credential = new SqlConnectionStringBuilder(Environment.PlatformAdmin) { UserID = actor, Password = "Aa1!" + Guid.NewGuid().ToString("N"), Pooling = false };
+        var credential = new SqlConnectionStringBuilder(Environment.PlatformAdmin) { UserID = actor, Pooling = false };
+        credential[nameof(SqlConnectionStringBuilder.Password)] = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)) + "!aA1";
         var admin = new SqlConnectionStringBuilder(Environment.PlatformAdmin) { InitialCatalog = "master" };
         await new SqlProvisioner(admin.ConnectionString).GrantOperatorAsync(credential.ConnectionString, Ct);
         await using var db = TenancyConnections.PlatformContext(Environment.PlatformAdmin);

@@ -14,17 +14,24 @@ Write-Host 'PRIVATE M3 OPERATIONS. No HTTP exposure. Secrets must be supplied th
 Write-Host 'Recovery reconciles security only; it does not restore SQL backups. Purge is irreversible.'
 while ($true) {
     Invoke-Maintenance -Command @('ops-list')
-    Write-Host 'list | install | lifecycle | plan | resume | recovery-begin | recovery-approve | recovery-resume | purge | exit'
+    Write-Host 'list | install | lifecycle | plan | resume | recovery-begin | recovery-restart | recovery-approve | recovery-resume | purge | exit'
     $action = Read-Host 'Action'
     if ($action -eq 'exit') { break }
     if ($action -eq 'list') { continue }
-    if ($action -notin @('install','lifecycle','plan','resume','recovery-begin','recovery-approve','recovery-resume','purge')) { Write-Warning 'Unknown action'; continue }
+    if ($action -notin @('install','lifecycle','plan','resume','recovery-begin','recovery-restart','recovery-approve','recovery-resume','purge')) { Write-Warning 'Unknown action'; continue }
     $tenant = Read-Host 'Tenant UUID from current list'
     $version = Read-Host 'Expected RegistryVersion from current list'
     if ($action -eq 'lifecycle') {
         $state = Read-Host 'active | suspended | delete (PendingDeletion)'
         $expiry = Read-Host 'Expiry in O format, including UTC offset'
         Invoke-Maintenance -Command @('ops-lifecycle', $tenant, $version, $state, $expiry)
+        continue
+    }
+    if ($action -eq 'recovery-restart') {
+        Write-Host 'Requires current recovery authority and SAAS_RECOVERY_REASON. A new full ACL approval is required after restart.'
+        $previous = Read-Host 'Current recovery operation UUID from the list (will be superseded)'
+        $replacement = Read-Host 'New unused operation UUID'
+        Invoke-Maintenance -Command @('ops-recovery-restart', $tenant, $previous, $replacement, $version)
         continue
     }
     $operation = Read-Host 'Operation UUID (new UUID for new work; recorded UUID for resume/approval/retry)'

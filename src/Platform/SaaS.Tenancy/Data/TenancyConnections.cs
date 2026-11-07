@@ -13,7 +13,20 @@ public sealed class TenancyConnections
     public static string Required(string key) => Environment.GetEnvironmentVariable(key) is { Length: > 0 } value
         ? value : throw new TenantContractException("missing_deployment_secret");
 
-    public string Platform(string role) => Validate(Required($"SAAS_PLATFORM_{role.ToUpperInvariant()}_CONNECTION"), PlatformDatabase, "saas_platform_" + role.ToLowerInvariant());
+    public string Platform(string role)
+    {
+        var login = "saas_platform_" + role.ToLowerInvariant();
+        // Only private deployment configuration may select a replacement operator. The connection
+        // must still match exactly; SQL role checks and ORIGINAL_LOGIN establish the actual actor.
+        if (role.Equals("operator", StringComparison.OrdinalIgnoreCase)
+            && Environment.GetEnvironmentVariable("SAAS_PLATFORM_OPERATOR_LOGIN") is { } selected)
+        {
+            if (string.IsNullOrWhiteSpace(selected) || selected.Length > 128 || selected.Any(char.IsControl))
+                throw new TenantContractException("database_principal_mismatch");
+            login = selected;
+        }
+        return Validate(Required($"SAAS_PLATFORM_{role.ToUpperInvariant()}_CONNECTION"), PlatformDatabase, login);
+    }
     public string Customer(Guid id, string role) => Validate(Required(TenantSecret(id, role)), TenantDatabase(id), (role.Equals("runtime", StringComparison.OrdinalIgnoreCase) ? "saas_rt_" : "saas_mg_") + id.ToString("N"));
     public string Provisioner() => Validate(Required("SAAS_PROVISIONER_CONNECTION"), "master", null);
 

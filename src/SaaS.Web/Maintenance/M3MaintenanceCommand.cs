@@ -44,6 +44,10 @@ internal static class M3MaintenanceCommand
             case "ops-recovery-begin" when args.Length == 4:
                 result = await maintenance.Operations.BeginRecoveryAsync(Id(args[1]), Id(args[2]), Version(args[3]), ct);
                 break;
+            case "ops-recovery-restart" when args.Length == 5:
+                result = await maintenance.Operations.RestartRecoveryAsync(Id(args[1]), Id(args[2]), Id(args[3]), Version(args[4]),
+                    TenancyConnections.Required("SAAS_RECOVERY_REASON"), ct);
+                break;
             case "ops-recovery-approve" when args.Length == 6:
                 var tenant = Id(args[1]); var operation = Id(args[2]); var version = Version(args[3]);
                 var upgrade = args[5] switch { "keep-plan" => false, "allow-approval-upgrade" => true, _ => throw Invalid() };

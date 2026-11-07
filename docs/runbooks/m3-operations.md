@@ -8,6 +8,8 @@ The HTTP host receives runtime connections only. Do not deploy provisioner, migr
 
 Run maintenance in a separate, trusted operator process with the existing M1 secret references and SQL roles. The CLI authenticates the actual SQL login in the fixed platform database; a command-line actor name is not authority. Resource operations also require the server provisioner and the registered customer migrator. Never pass passwords, connection strings, token material or certificates in argv. The console must not be exposed as an HTTP endpoint.
 
+The operator login defaults to `saas_platform_operator`. To replace a revoked approver, a platform administrator can provision a separate non-sysadmin login in the existing `saas_operator` role, register that login independently in `RecoveryAuthorities`, and inject its credential into the private process with `SAAS_PLATFORM_OPERATOR_CONNECTION` plus the exact non-secret `SAAS_PLATFORM_OPERATOR_LOGIN`. The configured name must match the authenticated connection; it is not a command-line assertion of authority. Runtime and migrator principal names remain fixed. Operators still cannot insert/update/delete recovery authorities. Never re-enable the revoked authority merely to unblock recovery.
+
 Use `pwsh -NoProfile -File scripts/operations-console.ps1 -AssemblyPath <published/SaaS.Web.dll>` for the minimal terminal UI. Its actions invoke the same maintenance commands below. It does not retry conflicts automatically or change a target silently. Cancellation/failure leaves durable state for inspection and an explicitly authorized resume.
 
 ## Commands
@@ -22,6 +24,7 @@ Invoke `dotnet <published/SaaS.Web.dll> --maintenance <command> ...`. UUIDs use 
 | `ops-plan` | tenant, operation, expectedVersion, `Standard`/`Approval` | Change plan through the guarded protocol. |
 | `ops-resume` | tenant, operation, expectedVersion | Resume the recorded plan operation with its original target, after prior-owner quiescence checks. |
 | `ops-recovery-begin` | tenant, operation, expectedVersion | Close access, advance authorization generation and invalidate prior sessions/grants before ACL reconciliation. |
+| `ops-recovery-restart` | tenant, previous-operation, new-operation, expectedVersion | Supersede a blocked recovery with a new generation/fence under current external authority; keep traffic closed and require a new full ACL decision. |
 | `ops-recovery-approve` | tenant, operation, expectedVersion, ACL-file, `keep-plan`/`allow-approval-upgrade` | Explicitly approve the complete replacement ACL using pre-registered external recovery authority. |
 | `ops-recovery-resume` | tenant, operation, expectedVersion | Revalidate membership/authority, replace ACL and append audit atomically, verify, then open only if all fences remain current. |
 | `ops-purge` | tenant, operation, expectedVersion, repeated-tenant-UUID | Irreversible target-only purge after PendingDeletion. The repeated UUID is an explicit confirmation, not a second target selector. |
@@ -35,6 +38,14 @@ The expiry changes and suspension do not wait for a long resource operation. The
 A platform administrator must separately register the actual SQL operator in `RecoveryAuthorities` before the recovery operation starts. An ordinary operator cannot self-register through these commands. That authority is outside the customer database. Plan-upgrade approval additionally requires the registered `CanChangePlan` authority. Revocation or unknown authority during apply keeps access closed.
 
 The ACL file is bounded to 1 MiB and must contain the complete document (roles, assignments and user overrides), not a patch. Set the non-secret review explanation in `SAAS_RECOVERY_REASON` (maximum 1000 characters). Do not put credentials or personal details in the reason. Approval records the document hash, decision, actor and reason. A decision cannot be silently replaced after application may have started. Keep the approved file in an operator-controlled location and delete local transient copies according to your operating policy.
+
+### A frozen decision has become invalid
+
+When membership/account/approver revocation makes a frozen decision invalid, do not amend that decision, restore revoked rights, or clear durable state. Use the current `ops-list` operation ID/version and a new UUID with `ops-recovery-restart`. Supply the bounded explanation in `SAAS_RECOVERY_REASON`. The current SQL actor must have enabled recovery authority registered before the replacement starts; this may be an independently registered replacement actor when the original approver is revoked.
+
+Restart requires an active, unexpired, non-retired tenant still in the specified recovery. It acquires the common tenant resource lease, verifies the prior worker has stopped on the same trusted operations host, and atomically records supersession plus new ownership, fences and security generations. The previous operation retains its approval/document/checkpoint; `CompletedAt` with a non-Completed checkpoint and `RecoverySuperseded` audit means terminated by replacement, not successful recovery. The audit links both operation IDs and the restart reason.
+
+The replacement starts with **no approval**. Re-read `ops-list`, approve a reviewed complete ACL that excludes revoked users/rights, and resume the **new** operation. Gate closure and all normal obligation/schema/feature/current-security checks still apply. A new suspension/deletion/expiry wins; restart never changes lifecycle. A failed close after the platform claim leaves the replacement ID visible and traffic closed. Correct the dependency, then approve/resume that ID; resume re-closes the customer gate under a fresh fence. Do not repeatedly allocate new operations for a dependency outage, reuse an old operation ID, or treat a failed restart command as proof that no platform state committed.
 
 Example shape (replace the role/user UUIDs with reviewed IDs; numeric effects are Unspecified=0, Allow=1, Deny=2):
 
