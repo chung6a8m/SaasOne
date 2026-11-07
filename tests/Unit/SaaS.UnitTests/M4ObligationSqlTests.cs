@@ -57,7 +57,8 @@ public sealed class M4ObligationSqlTests
         await using var h = await M4SqlHarness.CreateAsync(Ct, true);
         await PendingAsync(h);
         await using var sql = await SqlOperations.OpenAsync(h.Target.Connection, Ct);
-        await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'orders.Orders.ApprovalRequired', 'HiddenMarker', 'COLUMN';", Ct);
+        // Deliberately corrupt the disposable fixture; the enforced CHECK otherwise prevents this fault injection.
+        await SqlOperations.ExecuteAsync(sql, "ALTER TABLE [orders].[Orders] DROP CONSTRAINT [CK_OrderState]; EXEC sp_rename 'orders.Orders.ApprovalRequired', 'HiddenMarker', 'COLUMN';", Ct);
         Assert.Equal(ObligationState.Unknown, (await ReadAsync(h)).State);
         await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'orders.Orders.HiddenMarker', 'ApprovalRequired', 'COLUMN'; DELETE FROM [orders].[Revisions];", Ct);
         Assert.Equal(ObligationState.Unknown, (await ReadAsync(h)).State);
