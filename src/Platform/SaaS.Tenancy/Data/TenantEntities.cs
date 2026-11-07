@@ -17,3 +17,13 @@ public sealed class TenantBaseline
     public string FeatureHash { get; set; } = string.Empty;
     public string OrchardMigrationHash { get; set; } = string.Empty;
 }
+
+public sealed class TenantWriteGateRecord
+{
+    public int Id { get; set; } = 1;
+    public Guid TenantId { get; set; }
+    public bool IsOpen { get; set; }
+    public long Version { get; set; } = 1;
+    public Guid OperationId { get; set; }
+    public long Fence { get; set; } = 1;
+}

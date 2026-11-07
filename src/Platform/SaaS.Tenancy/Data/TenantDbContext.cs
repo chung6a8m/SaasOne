@@ -8,9 +8,15 @@ public sealed class TenantDbContext(DbContextOptions<TenantDbContext> options) :
     public DbSet<TenantDatabaseIdentity> Identity => Set<TenantDatabaseIdentity>();
     public DbSet<TenantBaseline> Baseline => Set<TenantBaseline>();
 
+    public DbSet<TenantWriteGateRecord> WriteGate => Set<TenantWriteGateRecord>();
+
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.HasDefaultSchema("tenancy");
+        var gate = model.Entity<TenantWriteGateRecord>();
+        gate.ToTable("WriteGate", table => table.HasCheckConstraint("CK_TenantWriteGate", "[Id] = 1 AND [Version] > 0 AND [Fence] > 0 AND [TenantId] <> '00000000-0000-0000-0000-000000000000' AND [OperationId] <> '00000000-0000-0000-0000-000000000000'"));
+        gate.HasKey(x => x.Id); gate.Property(x => x.Id).ValueGeneratedNever();
+        gate.Property(x => x.Version).IsConcurrencyToken();
         var identity = model.Entity<TenantDatabaseIdentity>();
         identity.ToTable("Identity", table =>
         {

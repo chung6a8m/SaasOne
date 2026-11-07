@@ -1586,12 +1586,16 @@
       "saas.accesscontrol": {
         "type": "Project",
         "dependencies": {
-          "SaaS.Abstractions": "[1.0.0, )"
+          "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )",
+          "SaaS.Abstractions": "[1.0.0, )",
+          "SaaS.Auditing": "[1.0.0, )",
+          "SaaS.Tenancy": "[1.0.0, )"
         }
       },
       "saas.auditing": {
         "type": "Project",
         "dependencies": {
+          "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.14, )",
           "SaaS.Abstractions": "[1.0.0, )"
         }
       },

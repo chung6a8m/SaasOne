@@ -154,6 +154,7 @@ public sealed class TenancyProvisioning(TenancyConnections connections, IOrchard
                         Id = 1, TenantId = registration.Id, DatabaseNonce = registration.DatabaseNonce,
                         InitialOperationId = request.OperationId, CreatedAt = DateTimeOffset.UtcNow
                     });
+                    customer.WriteGate.Add(new TenantWriteGateRecord { TenantId = registration.Id, OperationId = request.OperationId, IsOpen = false });
                     await customer.SaveChangesAsync(cancellationToken);
                 }
                 await TenancyConnections.VerifySchemaAsync(customer, cancellationToken);
