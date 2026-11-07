@@ -1,0 +1,37 @@
+name: M3 isolated development toolchain
+on:
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/m3-toolchain.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Restore only the pinned dependency graph
+        run: |
+          dotnet tool restore
+          dotnet restore SaasOne.slnx --locked-mode
+      - name: Package public toolchain and package cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/development
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          tar -czf artifacts/development/dotnet.tar.gz -C "$root" dotnet host shared packs sdk/10.0.403
+          tar -czf artifacts/development/nuget.tar.gz -C "$HOME/.nuget" packages
+          cp "$RUNNER_TEMP/pwsh.tar.gz" artifacts/development/pwsh.tar.gz
+          git rev-parse HEAD > artifacts/development/source-sha.txt
+          (cd artifacts/development && sha256sum *.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m3-offline-toolchain
+          path: artifacts/development
+          if-no-files-found: error
+          retention-days: 1
