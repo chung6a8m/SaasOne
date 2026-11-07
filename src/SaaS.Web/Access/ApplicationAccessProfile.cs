@@ -88,16 +88,25 @@ internal sealed class FoundationObligationReader : IApprovalObligationReader
                     actual.Add(table);
                 }
             }
+            var profile = actual.Contains("tenancy.ApplicationProfile")
+                ? await tenancy.ApplicationProfile.AsNoTracking().SingleOrDefaultAsync(cancellationToken) : null;
+            if (profile is not null)
+            {
+                if (profile.Id != 1 || profile.TenantId != tenant.TenantId || profile.Plan is not ("Standard" or "Approval"))
+                    return new(ObligationState.Unknown, 0);
+                var expectedHash = profile.Version switch
+                {
+                    1 => ApplicationAccessProfile.LegacyHash(profile.Plan),
+                    2 => ApplicationAccessProfile.Hash(profile.Plan),
+                    _ => null
+                };
+                // A readable current schema cannot authorize downgrading an unknown future profile.
+                if (expectedHash is null || profile.ManifestHash != expectedHash) return new(ObligationState.Unknown, 0);
+            }
             if (actual.Any(x => x.StartsWith("orders.", StringComparison.Ordinal)))
                 return await new OrdersObligationReader().ReadAsync(tenant, connection, cancellationToken);
             // Only the verified pre-Orders foundation can be empty. An installed M4 profile with missing schema is corruption.
-            if (actual.Contains("tenancy.ApplicationProfile"))
-            {
-                var profile = await tenancy.ApplicationProfile.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
-                if (profile is not null && (profile.Id != 1 || profile.TenantId != tenant.TenantId || profile.Version != 1
-                    || profile.Plan is not ("Standard" or "Approval") || profile.ManifestHash != ApplicationAccessProfile.LegacyHash(profile.Plan)))
-                    return new(ObligationState.Unknown, 0);
-            }
+            if (profile is { Version: >= 2 }) return new(ObligationState.Unknown, 0);
             return new(ObligationState.Clear, 0);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
