@@ -12,6 +12,14 @@ namespace SaaS.AccessControl;
 public sealed class RecoveryAclApplier(PermissionCatalog catalog,
     Func<Guid, IReadOnlyCollection<Guid>, CancellationToken, Task> currentMemberships, TimeProvider? clock = null) : IRecoveryAclApplier
 {
+    public IReadOnlyCollection<Guid> RequiredMemberships(RecoveryApproval approval)
+    {
+        var document = JsonSerializer.Deserialize<AclDocument>(approval.AclJson) ?? throw new AccessDeniedException(400, "acl_invalid");
+        catalog.Validate(document);
+        if (document.Hash() != approval.AclHash) throw new AccessDeniedException(403, "recovery_approval_changed");
+        return document.Assignments.Select(x => x.UserId).Concat(document.Overrides.Select(x => x.UserId)).Distinct().ToArray();
+    }
+
     public Task<RecoveryMarker> ApplyAsync(DbConnection connection, RecoveryApproval approval,
         Func<RecoveryApproval, CancellationToken, Task> demandCurrentApproval, CancellationToken cancellationToken)
         => ExecuteAsync(connection, approval, demandCurrentApproval, apply: true, cancellationToken);
@@ -42,7 +50,7 @@ public sealed class RecoveryAclApplier(PermissionCatalog catalog,
             await SqlTransactionLocks.AcquireAsync(sql, transaction, TenantWriteGate.LockResource, true, 30000, ct);
             await SqlTransactionLocks.AcquireAsync(sql, transaction, AclRepository.LockResource, true, 30000, ct);
             var gate = await TenantWriteGate.ReadAsync(sql, transaction, ct);
-            if (gate.IsOpen || gate.TenantId != approval.TenantId || gate.Version != approval.GateVersion
+            if (apply && gate.IsOpen || gate.TenantId != approval.TenantId || gate.Version != approval.GateVersion
                 || gate.OperationId != approval.OperationId || gate.Fence != approval.Fence)
                 throw new AccessDeniedException(503, "recovery_gate_changed");
             // Repeat even for an idempotent replay; no tenant record or old approval is an authority source.

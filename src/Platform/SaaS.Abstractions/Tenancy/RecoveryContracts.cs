@@ -9,6 +9,7 @@ public sealed record RecoveryMarker(Guid TenantId, Guid OperationId, long Genera
 /// <summary>Private host composition only. Recheck current external approval and memberships inside the apply boundary.</summary>
 public interface IRecoveryAclApplier
 {
+    IReadOnlyCollection<Guid> RequiredMemberships(RecoveryApproval approval);
     Task<RecoveryMarker> ApplyAsync(DbConnection connection, RecoveryApproval approval,
         Func<RecoveryApproval, CancellationToken, Task> demandCurrentApproval, CancellationToken cancellationToken);
     Task<RecoveryMarker> VerifyAsync(DbConnection connection, RecoveryApproval approval,
