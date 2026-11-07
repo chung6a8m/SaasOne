@@ -1,0 +1,61 @@
+diff --git a/src/SaaS.Web/Access/AccessEndpoints.cs b/src/SaaS.Web/Access/AccessEndpoints.cs
+--- a/src/SaaS.Web/Access/AccessEndpoints.cs
++++ b/src/SaaS.Web/Access/AccessEndpoints.cs
+@@ -19,7 +19,7 @@
+ {
+     public static void Register(IServiceCollection services)
+     {
+-        services.AddSingleton<ITenantApplicationEndpoints, AccessEndpoints>();
++        services.AddSingleton<ITenantApplicationEndpoints, ProductApplicationEndpoints>();
+         services.AddOrchardCore().Configure(app => app.Use(async (HttpContext context, RequestDelegate next) =>
+         {
+             var endpoints = context.RequestServices.GetRequiredService<ITenantApplicationEndpoints>();
+@@ -45,42 +45,13 @@
+         var ct = context.RequestAborted;
+         try
+         {
+-            var tenant = context.RequestServices.GetRequiredService<TenantContext>();
+-            var shell = context.RequestServices.GetRequiredService<ShellSettings>();
+-            var route = context.Features.Get<RoutedTenantSelection>();
+-            if (route is null || route.TenantId != tenant.TenantId || route.Shell != shell.Name || tenant.ShellName != shell.Name
+-                || shell.Name == "Default" || context.Request.PathBase != "/" + tenant.UrlPrefix)
+-                throw new AccessDeniedException(503, "routed_shell_mismatch");
+-            var connections = context.RequestServices.GetRequiredService<TenancyConnections>();
++            var boundary = new ApplicationRequestAuthority(context);
++            var tenant = boundary.Tenant;
++            var connections = boundary.Connections;
++            var connection = boundary.Connection;
+             var path = context.Request.Path.Value ?? "";
+-            var api = path.StartsWith("/api/", StringComparison.Ordinal);
+-            var connection = connections.Customer(tenant.TenantId, "runtime");
+-            async Task<CurrentAccess> Authority(CancellationToken token)
+-            {
+-                try
+-                {
+-                    IdentityFamily family;
+-                    if (api) family = await IdentityProtocol.AuthenticateBearerAsync(context, tenant.TenantId);
+-                    else
+-                    {
+-                        var result = await context.AuthenticateAsync(IdentityNames.TenantCookie);
+-                        if (context.Items.TryGetValue(IdentityProtocol.DeniedKey, out var error) && error is IdentityDeniedException denied) throw denied;
+-                        if (!result.Succeeded || result.Principal is null) throw new IdentityDeniedException(401, "authentication_required");
+-                        family = await context.RequestServices.GetRequiredService<IdentityAuthority>()
+-                            .ValidateAsync(IdentityAuthority.RequiredId(result.Principal, IdentityNames.Family), tenant.TenantId, true, token);
+-                        IdentityProtocol.DemandClaims(result.Principal, family);
+-                    }
+-                    await using var platform = TenancyConnections.PlatformContext(connections.Platform("runtime"));
+-                    var current = await platform.Tenants.AsNoTracking().SingleAsync(x => x.Id == tenant.TenantId, token);
+-                    if (current.RetiredAt is not null || !TenantPolicy.IsOperational(current.Status(), context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()))
+-                        throw new AccessDeniedException(403, "tenant_unavailable");
+-                    if (current.RegistryVersion != family.RegistryVersion) throw new AccessDeniedException(401, "credential_changed");
+-                    await using var sql = await SqlOperations.OpenAsync(connection, token);
+-                    await ApplicationAccessProfile.VerifyAsync(tenant.TenantId, current.Plan, sql, token);
+-                    return new(tenant.TenantId, family.GlobalUserId, current.AuthorizationGeneration, current.RegistryVersion, ApplicationAccessProfile.Entitlements(current.Plan));
+-                }
+-                catch (IdentityDeniedException error) { throw new AccessDeniedException(error.StatusCode, error.Code); }
+-            }
++            var api = boundary.IsApi;
++            async Task<CurrentAccess> Authority(CancellationToken token) => (await boundary.ReadAsync(token)).Current;
+             var service = new AccessService(connection, tenant.TenantId, ApplicationAccessProfile.Catalog, Authority,
+                 (users, token) => ApplicationAccessProfile.DemandMembershipsAsync(connections, "runtime", tenant.TenantId, users, token),
+                 context.RequestServices.GetRequiredService<TimeProvider>());
