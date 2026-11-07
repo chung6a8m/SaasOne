@@ -155,9 +155,19 @@ public sealed partial class M3RuntimeTests
         await service.BeginRecoveryAsync(Alpha.Id, previous, setup.Tenant.RegistryVersion, Ct);
         var current = await RegistrationAsync();
         await using var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct);
-        await SqlOperations.ExecuteAsync(sql, $"DENY UPDATE ON tenancy.WriteGate TO [saas_mg_{Alpha.Id:N}]", Ct);
-        try { Assert.Equal(1, await RestartRecoveryCommandAsync(previous, replacement, current.RegistryVersion)); }
-        finally { await SqlOperations.ExecuteAsync(sql, $"REVOKE UPDATE ON tenancy.WriteGate FROM [saas_mg_{Alpha.Id:N}]", Ct); }
+        var gate = await TenantWriteGate.ReadAsync(sql, null, Ct);
+        // A DENY is not a reliable fault against the privileged migrator. Reject the
+        // exact replacement at the SQL constraint boundary, and first prove the fault is armed.
+        await SqlOperations.ExecuteAsync(sql, $"ALTER TABLE tenancy.WriteGate ADD CONSTRAINT CK_M3RestartGateFault CHECK (OperationId <> '{replacement:D}')", Ct);
+        try
+        {
+            Assert.Equal(547, (await Assert.ThrowsAsync<SqlException>(() => TenantWriteGate.CloseAsync(
+                new TenancyConnections().Customer(Alpha.Id, "migrator"), Alpha.Id, gate.Version, replacement, current.Fence + 1, 5000, Ct))).Number);
+            Assert.Equal(1, await RestartRecoveryCommandAsync(previous, replacement, current.RegistryVersion));
+            var unchanged = await TenantWriteGate.ReadAsync(sql, null, Ct);
+            Assert.Equal(gate, unchanged);
+        }
+        finally { await SqlOperations.ExecuteAsync(sql, "ALTER TABLE tenancy.WriteGate DROP CONSTRAINT CK_M3RestartGateFault", Ct); }
         var interrupted = await RegistrationAsync();
         Assert.Equal(replacement, interrupted.OperationId); Assert.True(interrupted.SecurityRevalidationRequired);
         Assert.Equal(current.AuthorizationGeneration + 1, interrupted.AuthorizationGeneration);
