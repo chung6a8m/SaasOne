@@ -44,8 +44,8 @@ function Read-M6Trx {
 }
 function Resolve-M6Artifact {
     param([string]$Root, [string]$Relative)
-    if ([string]::IsNullOrEmpty($Relative) -or $Relative.Length -gt 512 -or [IO.Path]::IsPathRooted($Relative)
-        -or $Relative.Contains('\') -or $Relative.Contains(':') -or $Relative -match '[\x00-\x1f\x7f]') { throw 'artifact_path_invalid' }
+    if ([string]::IsNullOrEmpty($Relative) -or $Relative.Length -gt 512 -or [IO.Path]::IsPathRooted($Relative) -or
+        $Relative.Contains('\') -or $Relative.Contains(':') -or $Relative -match '[\x00-\x1f\x7f]') { throw 'artifact_path_invalid' }
     $current = [IO.Path]::GetFullPath($Root)
     foreach ($part in @('') + $Relative.Split('/')) {
         if ($part -ne '') {
@@ -80,8 +80,8 @@ function Open-M6Package {
         $handle.Position = 0
         $reader = [IO.StreamReader]::new($handle, [Text.Encoding]::UTF8, $true, 4096, $true)
         try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json -Depth 32 } finally { $reader.Dispose() }
-        if ($manifest.version -ne 1 -or $manifest.sourceSha -cnotmatch '^[0-9a-f]{40}$'
-            -or $manifest.runtimeIdentifier -notin @('linux-x64', 'win-x64') -or @($manifest.files).Count -lt 1 -or @($manifest.files).Count -gt 20000) { throw 'release_manifest_invalid' }
+        if ($manifest.version -ne 1 -or $manifest.sourceSha -cnotmatch '^[0-9a-f]{40}$' -or
+            $manifest.runtimeIdentifier -notin @('linux-x64', 'win-x64') -or @($manifest.files).Count -lt 1 -or @($manifest.files).Count -gt 20000) { throw 'release_manifest_invalid' }
         $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         $null = $expected.Add('release.json')
         foreach ($file in $manifest.files) {
