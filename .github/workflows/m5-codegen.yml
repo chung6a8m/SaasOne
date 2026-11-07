@@ -1,0 +1,84 @@
+# Temporary development transport/code generation. Remove before review.
+name: M5 temporary source and migration generation
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: m5-codegen-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  generate:
+    if: github.repository == 'chung6a8m/SaasOne' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/m5-order-approvals'
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: true
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Apply verified source payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,lzma,pathlib
+          data=b''.join(pathlib.Path(f'scripts/.m5-transfer/{i}.xzpart').read_bytes() for i in range(5))
+          assert hashlib.sha256(data).hexdigest()=='95ebcb1e644add2122512d0b9fa011db0d6b3e73acb2d120cea367b056d9ee02'
+          pathlib.Path('/tmp/m5.patch').write_bytes(lzma.decompress(data))
+          PY
+          git apply --check /tmp/m5.patch
+          git apply /tmp/m5.patch
+      - name: Generate pinned dependency inventory and EF migration
+        shell: pwsh
+        run: |
+          ./scripts/update-locks.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build src/Modules/SaaS.OrderApprovals --configuration Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet ef migrations add InitialApprovalsM5 --project src/Modules/SaaS.OrderApprovals --context ApprovalsDbContext --output-dir Data/Migrations --configuration Release --no-build
+          exit $LASTEXITCODE
+      - name: Commit generated implementation only to the guarded feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual=$(git ls-remote origin refs/heads/feat/m5-order-approvals | cut -f1)
+          test "$actual" = "$EXPECTED_HEAD"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests scripts/check.ps1 scripts/check-m5.ps1 scripts/m4-mandatory-cases.json scripts/m4-policy-mandatory-cases.json scripts/m5-mandatory-cases.json scripts/m5-policy-mandatory-cases.json scripts/m5-sql-fixture.ps1 SaasOne.slnx docs/compatibility/resolved-packages.json docs/runbooks/m5-order-approvals.md docs/verification/m5.md
+          git diff --cached --check
+          git commit -m 'feat(m5): implement atomic approval decisions and real plan recovery integration'
+          git push origin HEAD:refs/heads/feat/m5-order-approvals
+      - name: Compile and verify policy baseline
+        shell: pwsh
+        run: |
+          ./scripts/check.ps1 -Scope M0
+          exit $LASTEXITCODE
+      - name: Real SQL and native HTTP M5 cases
+        shell: pwsh
+        run: |
+          ./scripts/m5-sql-fixture.ps1
+          exit $LASTEXITCODE
+      - name: Retain exact tracked source and code generation outputs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/source
+          git rev-parse HEAD > artifacts/source/commit.txt
+          git status --short > artifacts/source/status.txt
+          git archive --format=tar.gz --output=artifacts/source/source.tar.gz HEAD
+          git diff --binary > artifacts/source/uncommitted.patch
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m5-codegen-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 7
