@@ -1,10 +1,10 @@
 # SaasOne
 
-Reusable Orchard Core multi-tenant SaaS foundation. The reviewed [roadmap](docs/roadmap/saas-orchard-roadmap-v1.md), revision 1.3, is normative. This branch implements M0 foundation, M1 tenancy/provisioning, M2 central identity, M3 authorization/lifecycle/audit and **M4 end-to-end Orders**.
+Reusable Orchard Core multi-tenant SaaS foundation. The reviewed [roadmap](docs/roadmap/saas-orchard-roadmap-v1.md), revision 1.3, is normative. This branch implements M0 foundation, M1 tenancy/provisioning, M2 central identity, M3 authorization/lifecycle/audit, M4 end-to-end Orders and **M5 revision-bound OrderApprovals**.
 
-Default uses a fixed platform database and native Orchard Users/OpenIddict. Customers have isolated databases, independent cookies, tenant-bound API credentials and current membership/session checks. M3 adds roles, Allow/Deny/Unspecified, user overrides, safe administration and guarded operations. M4 adds Orders screens/API using one service, atomic audit/history/receipts, optimistic concurrency and currently authorized replay. There are no public provisioning/operations or customer CMS administration endpoints.
+Default uses a fixed platform database and native Orchard Users/OpenIddict. Customers have isolated databases, independent cookies, tenant-bound API credentials and current membership/session checks. M3 adds roles, Allow/Deny/Unspecified, user overrides, safe administration and guarded operations. M4 adds Orders screens/API using one service, atomic audit/history/receipts, optimistic concurrency and currently authorized replay. M5 adds real one-level approval requests/decisions, optional-plan actions and persisted-history integration with the same lifecycle/recovery protocol. There are no public provisioning/operations or customer CMS administration endpoints.
 
-Implementation verification, owner acceptance and merge are separate. Read [M4 verification](docs/verification/m4.md) and [PR #6](https://github.com/chung6a8m/SaasOne/pull/6). ADR 0001–0007 are not automatically promoted to Accepted. No production deployment is implied. Production Approvals, SQL restore/release rehearsal and load/reuse acceptance remain M5–M7.
+Implementation verification, owner acceptance and merge are separate. Read [M5 verification](docs/verification/m5.md) and [PR #8](https://github.com/chung6a8m/SaasOne/pull/8). ADR 0001–0008 are not automatically promoted to Accepted. No production deployment is implied. SQL restore/release rehearsal and load/reuse acceptance remain M6–M7.
 
 ## Fresh clone without Visual Studio
 
@@ -18,12 +18,12 @@ pwsh --version
 dotnet tool restore
 dotnet restore SaasOne.slnx --locked-mode
 dotnet build SaasOne.slnx --configuration Release --no-restore
-dotnet test SaasOne.slnx --configuration Release --no-build --filter 'Category!=SqlM1&Category!=SqlM2&Category!=SqlM3&Category!=SqlM4' --logger trx --results-directory artifacts/test-results/m0
-pwsh -NoProfile -File scripts/check-m4.ps1
-if ($LASTEXITCODE -ne 0) { throw 'M4 verification failed.' }
+dotnet test SaasOne.slnx --configuration Release --no-build --filter 'Category!=SqlM1&Category!=SqlM2&Category!=SqlM3&Category!=SqlM4&Category!=SqlM5' --logger trx --results-directory artifacts/test-results/m0
+pwsh -NoProfile -File scripts/check-m5.ps1
+if ($LASTEXITCODE -ne 0) { throw 'M5 verification failed.' }
 ```
 
-The full gate runs inherited M0–M3 checks, five owned EF snapshot checks, restricted SQL smoke and the frozen M4 inventories. Locked build, dependency/native-feature architecture, configuration hygiene and evidence validation remain mandatory. SQL fixtures use disposable loopback-bound SQL Server 2022 Developer containers at build **16.0.4305.5**, generated credentials and mandatory cleanup. Developer edition is for development/testing only. All four SQL categories excluded from the non-SQL command are mandatory in full acceptance, never silently skipped.
+The full gate runs inherited M0–M4 checks, six owned EF snapshot checks, restricted SQL smoke and the frozen M5 inventories. Locked build, dependency/native-feature architecture, configuration hygiene and evidence validation remain mandatory. SQL fixtures use disposable loopback-bound SQL Server 2022 Developer containers at build **16.0.4305.5**, generated credentials and mandatory cleanup. Developer edition is for development/testing only. All five SQL categories excluded from the non-SQL command are mandatory in full acceptance, never silently skipped.
 
 | Gate | Additional coverage |
 |---|---|
@@ -32,10 +32,11 @@ The full gate runs inherited M0–M3 checks, five owned EF snapshot checks, rest
 | M2 | Native login, discovery, PKCE/code redemption, SSO, signed JWT binding, current authority, refresh races/reuse/lost response and production composition. |
 | M3 | ACL/overrides/resource policy on UI/API, safe administration/CSRF, atomic audit, write-gate drain/fences/crash/retry, lifecycle races, external ACL recovery/child upgrade and target-only purge. |
 | M4 | Orders create/read/edit/Submit, Own/Others Deny, revision/rowversion conflicts, atomic history/audit/receipt/handler writes, idempotency races/lost responses/current-policy replay, sticky obligations, private upgrade and SQL boundaries. |
+| M5 | Real request/decision persistence, self-decision and reason rules, exact revision, concurrent/replayed decisions, multi-context rollback, optional actions, upgrade/downgrade races and checkpoints, feature-off obligations and closed recovery child upgrade. |
 
-TestServer replaces HTTP transport, not authentication or SQL. These tests do not certify production DNS/TLS/proxy logging/secret delivery, M6 SQL restore or M7 distributed load. Missing/duplicate/zero/skipped/failing mandatory cases, stale source reports and cleanup errors cannot pass. JSON/TRX are under `artifacts/verification` and `artifacts/test-results`; `m4-acceptance.json` requires the entire prerequisite chain to identify the same tested SHA.
+TestServer replaces HTTP transport, not authentication or SQL. These tests do not certify production DNS/TLS/proxy logging/secret delivery, M6 SQL restore or M7 distributed load. Missing/duplicate/zero/skipped/failing mandatory cases, stale source reports and cleanup errors cannot pass. JSON/TRX are under `artifacts/verification` and `artifacts/test-results`; `m5-acceptance.json` requires the entire prerequisite chain to identify the same tested SHA.
 
-Focused scripts `sql-fixture.ps1`, `m1-sql-fixture.ps1`, `m2-sql-fixture.ps1`, `m3-sql-fixture.ps1` and `m4-sql-fixture.ps1` under `scripts` do not replace full acceptance. `check.ps1 -Scope M0` remains the foundation gate. A separately prepared matching SQL smoke instance uses secret-managed `SAAS_SQL_SMOKE_CONNECTION` and `-Scope SqlSmoke`; never paste credentials into commands or Git.
+Focused scripts `sql-fixture.ps1`, `m1-sql-fixture.ps1`, `m2-sql-fixture.ps1`, `m3-sql-fixture.ps1`, `m4-sql-fixture.ps1` and `m5-sql-fixture.ps1` under `scripts` do not replace full acceptance. `check.ps1 -Scope M0` remains the foundation gate. A separately prepared matching SQL smoke instance uses secret-managed `SAAS_SQL_SMOKE_CONNECTION` and `-Scope SqlSmoke`; never paste credentials into commands or Git.
 
 ## Provisioning and identity
 
@@ -76,13 +77,21 @@ It invokes authenticated lifecycle, plan, recovery and purge operations. New sus
 
 ## M4 Orders
 
-Follow the [Orders runbook](docs/runbooks/m4-orders.md). Private `access-install` advances application profile to version 2, applies the owned Orders and audit-detail migrations, preserves ACL and grants narrow runtime DML under the write gate. Existing M3 deployments require private reconciliation before this binary serves Orders. Unknown future profiles, corrupt installed schema and unknown business tables fail closed; there is no runtime repair. Orders permissions start default-denied.
+Follow the [Orders runbook](docs/runbooks/m4-orders.md). M4 introduced application profile version 2 with the owned Orders and audit-detail migrations. The current M5 binary requires private profile-v3 reconciliation described below; `access-install` preserves ACL and grants narrow runtime DML under the write gate. Existing M3/M4 deployments require private reconciliation before this binary serves business requests. Unknown future profiles, corrupt installed schema and unknown business tables fail closed; there is no runtime repair. Orders permissions start default-denied.
 
 `/{slug}/orders` and bearer `/{slug}/api/v1/orders` support create, list, read, edit draft and Submit through one service. Web writes use antiforgery; API writes require `Idempotency-Key`; existing-order writes require expected revision/rowversion. Retry a lost response with the same key and original command, not substituted fresh concurrency values. Current action and read permission remain required for replay.
 
-Standard confirms only without a persisted approval obligation. Required-approval submission needs current entitlement and a ready handler. M4 registers none and returns 503 rather than falling back to Confirmed. Rejected/rework retains its marker. The host composes the independent persisted Orders obligation reader, including when an approval handler is absent. M5 must deliberately extend the closed table inventory for its own tables; production decision routes are not hidden M4 endpoints.
+Standard confirms only without a persisted approval obligation. Required-approval submission needs current entitlement and a ready handler. Without a ready handler, the command returns 503 rather than falling back to Confirmed. Rejected/rework retains its marker. The host composes the independent persisted Orders obligation reader, including when the Approval entitlement is absent. M5 supplies the real handler and deliberately extends the closed table inventory for its owned history.
 
 [ADR 0007](docs/adr/0007-orders-command-contract.md) proposes the minimum field model, compiled-module composition and seven-day replay window. Expired receipts remain tombstones; no automatic deletion or silent key reuse exists. Product fields and data-retention policy require owner review.
+
+## M5 OrderApprovals
+
+Follow the [OrderApprovals runbook](docs/runbooks/m5-order-approvals.md) and review [ADR 0008](docs/adr/0008-order-approvals.md). Private reconciliation installs the separate `approvals` migration and verifies schema/history before publishing profile version 3. Both plans retain that schema and old decisions. Runtime cannot migrate or rewrite approval history. Unknown/corrupt history and pre-M5 fixture approval markers without genuine requests remain closed; no approvals are fabricated during upgrade.
+
+Approval tenants use `/{slug}/orders/{id}/approve` and `/reject`, or their bearer `/{slug}/api/v1/orders/{id}/...` counterparts. These are POST-only, require the expected submitted revision/rowversion and an idempotency key, and share the existing Orders transaction with audit/receipts. Web writes also require antiforgery. The creator cannot decide; rejection requires a non-empty reason. Standard exposes no usable decision action or controls. Current permissions are rechecked before a lost-response replay.
+
+Rejected orders must be edited and resubmitted, preserving their obligation and earlier decisions. Pending, Rejected and rework Draft block downgrade. Real approval writes participate in the existing drain/fence/checkpoint protocol. Recovery of feature-off obligations requires an explicitly approved child upgrade under the closed parent gate; it never automatically confirms an order. M5 proves this with persisted business-data fixtures, not SQL backup/restore.
 
 ## Repository and maintenance
 
@@ -94,11 +103,12 @@ Standard confirms only without a persisted approval obligation. Required-approva
 | `src/Platform/SaaS.AccessControl` | Permission catalog, tenant ACL, safe administration, transaction-bound authorization and recovery. |
 | `src/Platform/SaaS.Auditing` | Append-only customer audit. |
 | `src/Modules/SaaS.Orders` | State/policy, owned EF stream, atomic service, replay and obligation reader. |
+| `src/Modules/SaaS.OrderApprovals` | Revision-bound request/decision extension, owned EF stream and persisted-history verification. |
 | `src/Platform/SaaS.Abstractions`, `src/Themes/SaaS.Theme.App` | Shared contracts and platform-controlled theme. |
 | `tools`, `tests`, `docs` | Verification tooling, tests, source-bound evidence, decisions and runbooks. |
 
-Tenancy owns `platform`, `identity`, `tenancy`; AccessControl owns `access`; Auditing owns `audit`; Orders owns `orders`; Orchard owns its native tables/history. Platform/shared theme never reference business modules, including transitively. Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility](docs/compatibility/m0-matrix.md), [M0 decisions](docs/decisions/m0-register.md) and ADRs before boundary changes.
+Tenancy owns `platform`, `identity`, `tenancy`; AccessControl owns `access`; Auditing owns `audit`; Orders owns `orders`; OrderApprovals owns `approvals`; Orchard owns its native tables/history. Platform/shared theme never reference business modules, including transitively. Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility](docs/compatibility/m0-matrix.md), [M0 decisions](docs/decisions/m0-register.md) and ADRs before boundary changes.
 
-`dev.ps1 -Action Setup/Run/Check` retains baseline behavior; identity/M3/M4 require separately configured HTTPS and trusted state. Inherited workflows remain. `.github/workflows/m4.yml` runs full acceptance on PRs to main, main pushes and dispatch; component workflows are not full acceptance. Actions are pinned, final workflow permissions read-only, and artifacts contain source/JSON/TRX rather than raw credential-bearing stdout. The temporary branch-only development writer is removed.
+`dev.ps1 -Action Setup/Run/Check` retains baseline behavior; identity/M3/M4/M5 require separately configured HTTPS and trusted state. Inherited workflows remain. `.github/workflows/m5.yml` runs full acceptance on PRs to main, main pushes and dispatch; component workflows are not full acceptance. Actions are pinned, final workflow permissions read-only, and artifacts contain source/JSON/TRX rather than raw credential-bearing stdout. The temporary branch-only development writer is removed.
 
 Normal builds never rewrite locks. For reviewed dependency changes, run `scripts/update-locks.ps1`, inspect graph/locks, update rationale and rerun all gates. Never bypass NuGet audit. Rich text, executable uploads and arbitrary customer scripts remain disabled.
