@@ -17,3 +17,23 @@ public sealed class TenantBaseline
     public string FeatureHash { get; set; } = string.Empty;
     public string OrchardMigrationHash { get; set; } = string.Empty;
 }
+
+/// <summary>Deployment-owned manifest. Runtime reads it but cannot reconcile or repair it.</summary>
+public sealed class TenantApplicationProfile
+{
+    public int Id { get; set; } = 1;
+    public Guid TenantId { get; set; }
+    public string Plan { get; set; } = "";
+    public string ManifestHash { get; set; } = "";
+    public int Version { get; set; } = 1;
+}
+
+public sealed class TenantWriteGateRecord
+{
+    public int Id { get; set; } = 1;
+    public Guid TenantId { get; set; }
+    public bool IsOpen { get; set; }
+    public long Version { get; set; } = 1;
+    public Guid OperationId { get; set; }
+    public long Fence { get; set; } = 1;
+}

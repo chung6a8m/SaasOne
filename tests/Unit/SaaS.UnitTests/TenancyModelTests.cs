@@ -26,7 +26,8 @@ public sealed class TenancyModelTests
         };
         var platformTypes = new HashSet<Type>
         {
-            typeof(TenantRegistration), typeof(ProvisioningOperation), typeof(OperationalAudit), typeof(PlatformBootstrap)
+            typeof(TenantRegistration), typeof(ProvisioningOperation), typeof(OperationalAudit), typeof(PlatformBootstrap),
+            typeof(ResourceOperation), typeof(RecoveryAuthority)
         };
         // One EF owner now has two explicitly owned schemas. Do not accept arbitrary
         // schemas/types, Orchard's dbo tables, or the customer's identity singleton.

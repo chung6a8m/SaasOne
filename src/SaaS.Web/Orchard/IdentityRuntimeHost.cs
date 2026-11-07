@@ -18,6 +18,8 @@ public static class IdentityRuntimeHost
     {
         NativeServices.Add(builder.Services, new IdentityRegistryShellSettings(new TenancyConnections(), deployment));
         builder.Services.AddSaasIdentity(deployment, clock);
+        if (Environment.GetEnvironmentVariable("SAAS_ACCESS_CONTROL_ENABLED") == "true")
+            SaaS.Web.Access.AccessEndpoints.Register(builder.Services);
         // Framework request/protocol/SQL diagnostics can contain query credentials,
         // cookie values or serialized documents. Emit only our sanitized event codes.
         foreach (var category in new[] { "Microsoft.AspNetCore", "Microsoft.EntityFrameworkCore", "Microsoft.IdentityModel", "OpenIddict", "OrchardCore", "YesSql", "System.Net.Http.HttpClient" })
@@ -95,7 +97,8 @@ internal static class IdentityRuntimeBoundary
             local = path[slash..];
             try { if (TenantSlug.Parse(slug).Value != slug) throw new TenantContractException("invalid_slug"); }
             catch (TenantContractException) { context.Response.StatusCode = 404; return; }
-            if (!(get && (local is "/" or "/health/ready" || TenantGet.Contains(local)) || post && local == "/account/logout"))
+            if (!(get && (local is "/" or "/health/ready" || TenantGet.Contains(local)) || post && local == "/account/logout"
+                || context.RequestServices.GetService<ITenantApplicationEndpoints>()?.Matches(local, context.Request.Method) == true))
             { context.Response.StatusCode = 404; return; }
         }
         try

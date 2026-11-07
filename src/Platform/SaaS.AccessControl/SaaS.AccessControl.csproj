@@ -1,3 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup><ProjectReference Include="../SaaS.Abstractions/SaaS.Abstractions.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../SaaS.Abstractions/SaaS.Abstractions.csproj" />
+    <ProjectReference Include="../SaaS.Tenancy/SaaS.Tenancy.csproj" />
+    <ProjectReference Include="../SaaS.Auditing/SaaS.Auditing.csproj" /></ItemGroup>
+  <ItemGroup><PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" /><PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" /></ItemGroup>
 </Project>

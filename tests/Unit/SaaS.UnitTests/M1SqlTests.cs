@@ -183,15 +183,24 @@ public sealed partial class M1SqlTests(M1SqlFixture fixture) : IClassFixture<M1S
     [Fact]
     public async Task Missing_EF_schema_history_keeps_the_gate_closed_without_running_migrations()
     {
-        var id = await Scalar(Environment.CustomerAdmin(Alpha), "SELECT TOP(1) [MigrationId] FROM [tenancy].[__EFMigrationsHistory]");
-        var version = await Scalar(Environment.CustomerAdmin(Alpha), "SELECT TOP(1) [ProductVersion] FROM [tenancy].[__EFMigrationsHistory]");
+        // Preserve the complete stream: later milestones add migrations to this shared fixture.
+        await using var historyConnection = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct);
+        await using var historyCommand = SqlOperations.Command(historyConnection, "SELECT [MigrationId], [ProductVersion] FROM [tenancy].[__EFMigrationsHistory]");
+        var history = new List<(string Id, string Version)>();
+        await using (var reader = await historyCommand.ExecuteReaderAsync(Ct))
+            while (await reader.ReadAsync(Ct)) history.Add((reader.GetString(0), reader.GetString(1)));
+        Assert.NotEmpty(history);
         try
         {
             await Execute(Environment.CustomerAdmin(Alpha), "DELETE FROM [tenancy].[__EFMigrationsHistory]");
             await AssertClosed(Alpha);
             Assert.Equal(0, await Scalar(Environment.CustomerAdmin(Alpha), "SELECT COUNT(*) FROM [tenancy].[__EFMigrationsHistory]"));
         }
-        finally { await Execute(Environment.CustomerAdmin(Alpha), "INSERT INTO [tenancy].[__EFMigrationsHistory] ([MigrationId],[ProductVersion]) VALUES (@id,@version)", ("@id", id), ("@version", version)); }
+        finally
+        {
+            foreach (var row in history)
+                await Execute(Environment.CustomerAdmin(Alpha), "INSERT INTO [tenancy].[__EFMigrationsHistory] ([MigrationId],[ProductVersion]) VALUES (@id,@version)", ("@id", row.Id), ("@version", row.Version));
+        }
     }
 
     [Theory]

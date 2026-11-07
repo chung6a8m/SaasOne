@@ -35,7 +35,8 @@ public static class IdentityProtocol
             { await WriteErrorAsync(context, 400, "invalid_origin"); return; }
             var allowed = shell.Name == "Default"
                 ? context.Request.PathBase == "" && (HttpMethods.IsGet(context.Request.Method) ? DefaultGet.Contains(path) : HttpMethods.IsPost(context.Request.Method) && DefaultPost.Contains(path))
-                : context.Request.PathBase == "/" + shell.RequestUrlPrefix && (HttpMethods.IsGet(context.Request.Method) ? TenantGet.Contains(path) : HttpMethods.IsPost(context.Request.Method) && path == "/account/logout");
+                : context.Request.PathBase == "/" + shell.RequestUrlPrefix && ((HttpMethods.IsGet(context.Request.Method) ? TenantGet.Contains(path) : HttpMethods.IsPost(context.Request.Method) && path == "/account/logout")
+                    || context.RequestServices.GetService<ITenantApplicationEndpoints>()?.Matches(path, context.Request.Method) == true);
             if (!allowed) { context.Response.StatusCode = 404; return; }
             if (oauth && context.Request.HasFormContentType)
             {

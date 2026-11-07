@@ -1,7 +1,7 @@
 namespace SaaS.Abstractions.Tenancy;
 
 public enum SubscriptionStatus { Active = 1, Suspended = 2, PendingDeletion = 3 }
-public enum OperationStatus { None = 0, Provisioning = 1, Failed = 2, PlanChanging = 3, Migrating = 4, Restoring = 5, SecurityRevalidation = 6 }
+public enum OperationStatus { None = 0, Provisioning = 1, Failed = 2, PlanChanging = 3, Migrating = 4, Restoring = 5, SecurityRevalidation = 6, Purging = 7 }
 
 public sealed record TenantContext(Guid TenantId, string ShellName, string UrlPrefix);
 public sealed record TenantStatus(Guid TenantId, SubscriptionStatus Subscription, DateTimeOffset ExpiresAt,

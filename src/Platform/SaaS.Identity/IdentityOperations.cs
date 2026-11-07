@@ -32,8 +32,11 @@ public sealed class IdentityOperations(TenancyConnections connections, TimeProvi
 
     public Task SetMembershipAsync(Guid userId, Guid tenantId, bool active, CancellationToken ct) => MutateAsync(async (db, actor) =>
     {
-        if (!await db.IdentityAccounts.AnyAsync(x => x.Id == userId, ct) || !await db.Tenants.AnyAsync(x => x.Id == tenantId, ct))
+        var tenant = await db.Tenants.AsNoTracking().SingleOrDefaultAsync(x => x.Id == tenantId, ct);
+        if (!await db.IdentityAccounts.AnyAsync(x => x.Id == userId, ct) || tenant is null)
             throw new TenantContractException("identity_target_missing");
+        if (active && (tenant.RetiredAt is not null || tenant.PurgedAt is not null || tenant.Subscription == SubscriptionStatus.PendingDeletion))
+            throw new TenantContractException("tenant_retired");
         var member = await db.IdentityMemberships.SingleOrDefaultAsync(x => x.GlobalUserId == userId && x.TenantId == tenantId, ct);
         if (member is null)
         {
@@ -62,10 +65,13 @@ public sealed class IdentityOperations(TenancyConnections connections, TimeProvi
         return true;
     }, ct);
 
-    public Task SetTenantAsync(Guid tenantId, SubscriptionStatus subscription, DateTimeOffset expiresAt, CancellationToken ct) => MutateAsync(async (db, actor) =>
+    public Task SetTenantAsync(Guid tenantId, SubscriptionStatus subscription, DateTimeOffset expiresAt, CancellationToken ct, long? expectedVersion = null) => MutateAsync(async (db, actor) =>
     {
         if (!Enum.IsDefined(subscription)) throw new TenantContractException("invalid_subscription_state");
         var tenant = await db.Tenants.SingleAsync(x => x.Id == tenantId, ct);
+        if (expectedVersion.HasValue && (expectedVersion < 1 || tenant.RegistryVersion != expectedVersion.Value))
+            throw new TenantContractException("operation_reconciliation_required");
+        if (tenant.RetiredAt is not null || tenant.PurgedAt is not null) throw new TenantContractException("tenant_retired");
         if (tenant.Subscription == SubscriptionStatus.PendingDeletion && subscription != SubscriptionStatus.PendingDeletion)
             throw new TenantContractException("deletion_recovery_requires_separate_operation");
         if (tenant.Subscription == subscription && tenant.ExpiresAt == expiresAt) return true;

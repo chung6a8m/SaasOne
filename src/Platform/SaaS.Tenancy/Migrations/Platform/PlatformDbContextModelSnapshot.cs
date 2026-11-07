@@ -404,6 +404,11 @@ namespace SaaS.Tenancy.Migrations.Platform
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTimeOffset>("OccurredAt")
                         .HasColumnType("datetimeoffset");
 
@@ -501,10 +506,139 @@ namespace SaaS.Tenancy.Migrations.Platform
                     b.ToTable("Operations", "platform");
                 });
 
+            modelBuilder.Entity("SaaS.Tenancy.Data.RecoveryAuthority", b =>
+                {
+                    b.Property<string>("Actor")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .UseCollation("Latin1_General_100_BIN2");
+
+                    b.Property<bool>("CanChangePlan")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("RegisteredAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("RegisteredBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Actor");
+
+                    b.ToTable("RecoveryAuthorities", "platform");
+                });
+
+            modelBuilder.Entity("SaaS.Tenancy.Data.ResourceOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AllowApprovalUpgrade")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ApprovalReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("ApprovedAcl")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ApprovedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ApprovedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("ApprovedHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<long>("AuthorizationGeneration")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Checkpoint")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("ExpectedRegistryVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Fence")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("GateVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<string>("OwnerHost")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("RequestedPlan")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(48)");
+
+                    b.Property<string>("SelectedPlan")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(48)");
+
+                    b.Property<string>("SourcePlan")
+                        .IsRequired()
+                        .HasMaxLength(48)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(48)");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "StartedAt");
+
+                    b.ToTable("ResourceOperations", "platform", t =>
+                        {
+                            t.HasCheckConstraint("CK_ResourceOperation", "[Kind] IN (3,5,7) AND [Fence] > 0 AND [ExpectedRegistryVersion] > 0 AND [AuthorizationGeneration] > 0 AND [Checkpoint] BETWEEN 0 AND 8");
+                        });
+                });
+
             modelBuilder.Entity("SaaS.Tenancy.Data.TenantRegistration", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("AuthorizationGeneration")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(1L);
 
                     b.Property<string>("DatabaseName")
                         .IsRequired()
@@ -542,9 +676,15 @@ namespace SaaS.Tenancy.Migrations.Platform
                         .IsUnicode(false)
                         .HasColumnType("varchar(48)");
 
+                    b.Property<DateTimeOffset?>("PurgedAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<long>("RegistryVersion")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("RetiredAt")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<string>("RuntimeSecret")
                         .IsRequired()
@@ -577,11 +717,11 @@ namespace SaaS.Tenancy.Migrations.Platform
                         {
                             t.HasCheckConstraint("CK_Tenants_Id", "[Id] <> '00000000-0000-0000-0000-000000000000'");
 
-                            t.HasCheckConstraint("CK_Tenants_Operation", "([Operation] = 0 AND [OperationId] IS NULL AND [OwnerId] IS NULL) OR ([Operation] BETWEEN 1 AND 6 AND [OperationId] IS NOT NULL)");
+                            t.HasCheckConstraint("CK_Tenants_Operation", "([Operation] = 0 AND [OperationId] IS NULL AND [OwnerId] IS NULL) OR ([Operation] BETWEEN 1 AND 7 AND [OperationId] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_Tenants_Subscription", "[Subscription] IN (1,2,3)");
 
-                            t.HasCheckConstraint("CK_Tenants_Version", "[RegistryVersion] > 0 AND [Fence] > 0");
+                            t.HasCheckConstraint("CK_Tenants_Version", "[RegistryVersion] > 0 AND [Fence] > 0 AND [AuthorizationGeneration] > 0");
                         });
                 });
 
@@ -667,6 +807,15 @@ namespace SaaS.Tenancy.Migrations.Platform
                 });
 
             modelBuilder.Entity("SaaS.Tenancy.Data.ProvisioningOperation", b =>
+                {
+                    b.HasOne("SaaS.Tenancy.Data.TenantRegistration", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("SaaS.Tenancy.Data.ResourceOperation", b =>
                 {
                     b.HasOne("SaaS.Tenancy.Data.TenantRegistration", null)
                         .WithMany()

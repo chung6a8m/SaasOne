@@ -34,7 +34,7 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
     public string Subject { get; private set; } = "";
     public ConcurrentDictionary<string, OAuthTokens> CapturedTokens { get; } = new(StringComparer.Ordinal);
     private readonly string _home = Path.Combine(Path.GetTempPath(), "saas-identity-" + Guid.NewGuid().ToString("N"));
-    private readonly Dictionary<Guid, string> _secrets = [];
+    private readonly ConcurrentDictionary<Guid, string> _secrets = [];
     private readonly List<(Guid Id, SaaS.Abstractions.Tenancy.SubscriptionStatus Status, DateTimeOffset Expiry)> _original = [];
     private readonly bool _productHost;
     private WebApplication _application = null!;
@@ -58,7 +58,7 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
             fixture._encryption = fixture.Certificate("encryption");
             foreach (var tenant in environment.Tenants) fixture._secrets[tenant.Id] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
             fixture.Deployment = new IdentityDeployment(Origin, fixture._signing, fixture._encryption, Path.Combine(fixture._home, "dp"),
-                "m2http" + Guid.NewGuid().ToString("N")[..10], id => fixture._secrets[id]);
+                "m2http" + Guid.NewGuid().ToString("N")[..10], fixture.Secret);
             await using (var db = TenancyConnections.PlatformContext(environment.PlatformAdmin))
                 fixture._original.AddRange((await db.Tenants.AsNoTracking().ToArrayAsync()).Select(x => (x.Id, x.Subscription, x.ExpiresAt)));
             var installer = new IdentityInstaller(new TenancyConnections(), fixture.Deployment);
@@ -75,7 +75,7 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
 
     public HttpClient NewClient() => new(_application.GetTestServer().CreateHandler()) { BaseAddress = Origin, Timeout = TimeSpan.FromSeconds(30) };
     public HttpBrowser NewBrowser() => new(NewClient());
-    public string Secret(Guid tenantId) => _secrets[tenantId];
+    public string Secret(Guid tenantId) => _secrets.GetOrAdd(tenantId, _ => Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)));
     public TestTenant Tenant(string slug) => Environment.Tenants.Single(x => x.Slug == slug);
 
     private X509Certificate2 Certificate(string name)
@@ -139,7 +139,7 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         _encryption.Dispose();
         _signing = X509CertificateLoader.LoadPkcs12FromFile(Path.Combine(_home, "signing.pfx"), Credential, X509KeyStorageFlags.EphemeralKeySet);
         _encryption = X509CertificateLoader.LoadPkcs12FromFile(Path.Combine(_home, "encryption.pfx"), Credential, X509KeyStorageFlags.EphemeralKeySet);
-        Deployment = new IdentityDeployment(Origin, _signing, _encryption, Path.Combine(_home, "dp"), Deployment.NativePrefix, id => _secrets[id]);
+        Deployment = new IdentityDeployment(Origin, _signing, _encryption, Path.Combine(_home, "dp"), Deployment.NativePrefix, Secret);
         await StartAsync();
     }
 
