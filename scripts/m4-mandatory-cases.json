@@ -1,4 +1,10 @@
 [
+  "SaaS.UnitTests.M4HttpTests.Native_web_and_API_share_successful_edit_submit_and_cross_transport_replay",
+  "SaaS.UnitTests.M4HttpTests.Native_maximum_valid_Unicode_form_and_JSON_have_equivalent_validation",
+  "SaaS.UnitTests.M4HttpTests.Private_install_never_downgrades_an_unknown_future_application_profile",
+  "SaaS.UnitTests.M4HttpTests.Installed_Orders_with_a_missing_marker_stays_closed_instead_of_runtime_repair",
+  "SaaS.UnitTests.M4HttpTests.Private_upgrade_from_verified_M3_installs_Orders_without_replacing_existing_ACL",
+  "SaaS.UnitTests.M4HttpTests.Private_downgrade_preserves_pending_rejected_rework_obligations_until_confirmation",
   "SaaS.UnitTests.M4HttpTests.Native_UI_API_default_deny_and_current_overrides_have_the_same_outcome",
   "SaaS.UnitTests.M4HttpTests.Native_API_creates_edits_reads_and_submits_with_atomic_audit_history",
   "SaaS.UnitTests.M4HttpTests.Native_web_create_requires_CSRF_encodes_content_and_uses_API_concurrency",
