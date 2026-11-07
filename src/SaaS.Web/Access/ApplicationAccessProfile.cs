@@ -94,6 +94,8 @@ internal sealed class ApplicationPlanReconciler(TenancyConnections connections) 
     public async Task MigrateAsync(TenantContext tenant, string targetPlan, DbConnection ownedConnection, CancellationToken ct)
     {
         _ = ApplicationAccessProfile.Entitlements(targetPlan);
+        await using var tenancy = ApplicationAccessProfile.Open(ownedConnection);
+        await tenancy.Database.MigrateAsync(ct);
         await using var access = AccessDbContext.Open(ownedConnection);
         await using var audit = AuditDbContext.Open(ownedConnection);
         await access.Database.MigrateAsync(ct);

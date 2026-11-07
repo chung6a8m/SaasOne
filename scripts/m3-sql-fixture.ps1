@@ -11,19 +11,14 @@ $previousSa = $env:MSSQL_SA_PASSWORD
 $previousConnection = $env:SAAS_M1_ADMIN_CONNECTION
 $started = $false
 $code = 1
-$required = @(
-    'Gate_close_drains_writers_and_timeout_does_not_claim_durable_closure',
-    'Preauthorized_writer_cannot_cross_closed_or_newer_gate_after_restart',
-    'Stale_owner_fence_and_wrong_tenant_cannot_open_or_write_the_gate',
-    'Cross_context_acl_and_audit_commit_on_one_connection_and_transaction',
-    'Audit_failure_rolls_back_the_entire_acl_transaction'
-)
+$required = @(Get-Content (Join-Path $PSScriptRoot 'm3-mandatory-cases.json') -Raw | ConvertFrom-Json)
+. (Join-Path $PSScriptRoot 'm3-evidence-inventory.ps1')
 $report = [ordered]@{
-    scope = 'M3 SQL infrastructure'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null
+    scope = 'M3 authorization lifecycle recovery audit and HTTP'; status = 'FAIL'; sourceSha = $null; image = $image; digest = $null
     command = 'dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter Category=SqlM3 --logger trx --results-directory artifacts/test-results/m3-poc'
     testExitCode = $null; cleanupExitCode = $null; total = 0; executed = 0; passed = 0; failed = 0; skipped = 0
     mandatoryCases = @($required | ForEach-Object { [ordered]@{ name = $_; discovered = 0; outcome = 'NotExecuted' } })
-    discoveredCases = @(); missingMandatoryCases = @($required)
+    discoveredCases = @(); missingMandatoryCases = @($required); unexpectedCases = @(); evidenceValidatorCases = 0
 }
 Push-Location $root
 try {
@@ -31,6 +26,7 @@ try {
     Remove-Item artifacts/verification/m3-poc.json -Force -ErrorAction SilentlyContinue
     Remove-Item artifacts/test-results/m3-poc -Recurse -Force -ErrorAction SilentlyContinue
     New-Item artifacts/test-results/m3-poc -ItemType Directory -Force | Out-Null
+    $report.evidenceValidatorCases = & (Join-Path $PSScriptRoot 'test-m3-evidence.ps1')
     $report.sourceSha = (& git rev-parse HEAD | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $report.sourceSha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot record source identity.' }
     if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) { throw 'BLOCKED: Docker is required.' }
@@ -64,20 +60,17 @@ try {
     $report.skipped = $report.total - $report.executed
     $results = @($trx.TestRun.Results.UnitTestResult)
     $report.discoveredCases = @($results | ForEach-Object { [ordered]@{ name = $_.testName; outcome = $_.outcome } })
-    $report.mandatoryCases = @($required | ForEach-Object {
-        $case = $_
-        $found = @($results | Where-Object { $_.testName -ceq ('SaaS.UnitTests.M3SqlTests.' + $case) })
-        $outcome = if ($found.Count -eq 0) { 'Missing' } elseif ($found.Count -ne 1) { 'Duplicate' } else { [string]$found[0].outcome }
-        [ordered]@{ name = $case; discovered = $found.Count; outcome = $outcome }
-    })
-    $report.missingMandatoryCases = @($report.mandatoryCases | Where-Object { $_.discovered -eq 0 } | ForEach-Object { $_.name })
+    $inventory = Get-M3EvidenceInventory -Results $results -Required $required
+    $report.mandatoryCases = $inventory.mandatoryCases
+    $report.missingMandatoryCases = $inventory.missingMandatoryCases
+    $report.unexpectedCases = $inventory.unexpectedCases
     # Record the full missing/failed inventory BEFORE throwing. Passing native-store
     # subtests must never masquerade as passing API/web/PKCE/production acceptance cases.
-    if ($report.testExitCode -ne 0 -or $report.total -lt 1 -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) {
-        throw 'Every discovered M3 SQL infrastructure case must execute and pass.'
+    if ($report.testExitCode -ne 0 -or $report.total -ne $required.Count -or $results.Count -ne $report.total -or $report.executed -ne $report.total -or $report.passed -ne $report.total -or $report.failed -ne 0) {
+        throw 'Every mandatory M3 case must execute exactly once and pass.'
     }
-    if (@($report.mandatoryCases | Where-Object { $_.outcome -cne 'Passed' }).Count -ne 0) {
-        throw 'BLOCKED: mandatory end-to-end M3 SQL infrastructure evidence is missing or invalid.'
+    if (-not $inventory.valid) {
+        throw 'BLOCKED: mandatory end-to-end M3 evidence is missing or invalid.'
     }
     $code = 0
 } catch {
