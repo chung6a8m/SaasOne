@@ -1,0 +1,32 @@
+diff --git a/tests/Unit/SaaS.UnitTests/M4ObligationSqlTests.cs b/tests/Unit/SaaS.UnitTests/M4ObligationSqlTests.cs
+--- a/tests/Unit/SaaS.UnitTests/M4ObligationSqlTests.cs
++++ b/tests/Unit/SaaS.UnitTests/M4ObligationSqlTests.cs
+@@ -54,7 +54,8 @@
+         await using var h = await M4SqlHarness.CreateAsync(Ct, true);
+         await PendingAsync(h);
+         await using var sql = await SqlOperations.OpenAsync(h.Target.Connection, Ct);
+-        await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'orders.Orders.ApprovalRequired', 'HiddenMarker', 'COLUMN';", Ct);
++        // Deliberately corrupt the disposable fixture; the enforced CHECK otherwise prevents this fault injection.
++        await SqlOperations.ExecuteAsync(sql, "ALTER TABLE [orders].[Orders] DROP CONSTRAINT [CK_OrderState]; EXEC sp_rename 'orders.Orders.ApprovalRequired', 'HiddenMarker', 'COLUMN';", Ct);
+         Assert.Equal(ObligationState.Unknown, (await ReadAsync(h)).State);
+         await SqlOperations.ExecuteAsync(sql, "EXEC sp_rename 'orders.Orders.HiddenMarker', 'ApprovalRequired', 'COLUMN'; DELETE FROM [orders].[Revisions];", Ct);
+         Assert.Equal(ObligationState.Unknown, (await ReadAsync(h)).State);
+diff --git a/scripts/m4-mandatory-cases.json b/scripts/m4-mandatory-cases.json
+--- a/scripts/m4-mandatory-cases.json
++++ b/scripts/m4-mandatory-cases.json
+@@ -1,4 +1,15 @@
+ [
++  "SaaS.UnitTests.M4HttpTests.Native_UI_API_default_deny_and_current_overrides_have_the_same_outcome",
++  "SaaS.UnitTests.M4HttpTests.Native_API_creates_edits_reads_and_submits_with_atomic_audit_history",
++  "SaaS.UnitTests.M4HttpTests.Native_web_create_requires_CSRF_encodes_content_and_uses_API_concurrency",
++  "SaaS.UnitTests.M4HttpTests.Native_replay_survives_commit_but_not_revoked_action_read_or_membership",
++  "SaaS.UnitTests.M4HttpTests.Native_own_others_permissions_use_persisted_creator_and_filter_the_list",
++  "SaaS.UnitTests.M4HttpTests.Native_shell_routing_and_token_binding_prevent_cross_tenant_orders",
++  "SaaS.UnitTests.M4HttpTests.Native_strict_commands_reject_overposting_duplicates_invalid_shapes_and_oversized_bodies",
++  "SaaS.UnitTests.M4HttpTests.Native_required_authority_sources_fail_closed_before_returning_a_stored_result",
++  "SaaS.UnitTests.M4HttpTests.Native_audit_failure_rolls_back_and_retry_commits_once",
++  "SaaS.UnitTests.M4HttpTests.Native_approval_plan_without_handler_is_unavailable_not_standard_confirmation",
++  "SaaS.UnitTests.M4HttpTests.Native_runtime_cannot_delete_history_rewrite_receipts_administer_SQL_or_open_approval_routes",
+   "SaaS.UnitTests.M4ObligationSqlTests.Empty_verified_orders_schema_is_clear_but_a_different_database_identity_is_unknown",
+   "SaaS.UnitTests.M4ObligationSqlTests.Reader_counts_pending_rejected_and_rework_without_an_entitlement_or_handler_dependency",
+   "SaaS.UnitTests.M4ObligationSqlTests.Confirmed_order_preserves_its_marker_but_no_longer_counts_as_outstanding",
