@@ -1,4 +1,24 @@
 [
   "SaaS.UnitTests.M4HttpTests.Orders_API_route_authenticates_before_reading_business_data",
-  "SaaS.UnitTests.M4HttpTests.Orders_web_route_authenticates_before_reading_business_data"
+  "SaaS.UnitTests.M4HttpTests.Orders_web_route_authenticates_before_reading_business_data",
+  "SaaS.UnitTests.M4OrderSqlTests.Create_persists_one_order_revision_audit_and_receipt_and_reads_the_same_rowversion",
+  "SaaS.UnitTests.M4OrderSqlTests.Standard_submit_confirms_and_commits_exactly_one_new_revision",
+  "SaaS.UnitTests.M4OrderSqlTests.Lost_create_response_replays_the_original_result_without_duplicate_side_effects",
+  "SaaS.UnitTests.M4OrderSqlTests.Lost_submit_response_replays_after_state_revision_and_rowversion_changed",
+  "SaaS.UnitTests.M4OrderSqlTests.Edit_replay_returns_its_committed_snapshot_not_a_later_revision",
+  "SaaS.UnitTests.M4OrderSqlTests.Same_key_different_payload_conflicts_without_writing_history_or_audit",
+  "SaaS.UnitTests.M4OrderSqlTests.Concurrent_same_key_executes_once_and_the_waiter_replays",
+  "SaaS.UnitTests.M4OrderSqlTests.Concurrent_different_keys_on_one_revision_have_one_winner",
+  "SaaS.UnitTests.M4OrderSqlTests.Duplicate_normalized_number_rolls_back_the_complete_second_command",
+  "SaaS.UnitTests.M4OrderSqlTests.Tenant_actor_and_client_partitions_cannot_return_another_contexts_receipt",
+  "SaaS.UnitTests.M4OrderSqlTests.List_filters_ownership_before_pagination_and_does_not_expose_other_owners_rows",
+  "SaaS.UnitTests.M4OrderSqlTests.Revoked_action_denies_replay_before_disclosing_a_result_or_fingerprint_conflict",
+  "SaaS.UnitTests.M4OrderSqlTests.Revoked_read_and_entitlement_deny_replay_even_with_action_allowed",
+  "SaaS.UnitTests.M4OrderSqlTests.Current_authority_source_failure_denies_replay_and_does_not_use_an_old_allow",
+  "SaaS.UnitTests.M4OrderSqlTests.Expired_receipt_is_an_authorized_tombstone_not_a_reusable_key",
+  "SaaS.UnitTests.M4OrderSqlTests.Real_audit_constraint_failure_rolls_back_order_history_and_receipt",
+  "SaaS.UnitTests.M4OrderSqlTests.Approval_entitlement_without_a_handler_never_confirms_the_order",
+  "SaaS.UnitTests.M4OrderSqlTests.Handler_write_then_failure_rolls_back_the_entire_submit",
+  "SaaS.UnitTests.M4OrderSqlTests.Rejected_edit_resubmit_and_approval_keep_revision_bound_obligation_and_history",
+  "SaaS.UnitTests.M4OrderSqlTests.Closed_write_gate_denies_both_new_commands_and_replay"
 ]
