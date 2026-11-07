@@ -1,0 +1,71 @@
+# Temporary feature-branch development generation. This is NOT an acceptance gate.
+# It may change only generated NuGet inventory/locks and owned EF migrations on this branch.
+name: M4 development inputs
+on:
+  push:
+    branches: [codex/m4-orders]
+permissions:
+  contents: write
+concurrency:
+  group: m4-development-inputs
+  cancel-in-progress: false
+jobs:
+  generate:
+    if: github.repository == 'chung6a8m/SaasOne' && github.ref == 'refs/heads/codex/m4-orders'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Generate locked inputs and owned snapshots
+        shell: pwsh
+        run: |
+          ./scripts/update-locks.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Test-Path src/Modules/SaaS.Orders/Data/OrdersDbContext.cs) -and -not (Test-Path src/Modules/SaaS.Orders/Migrations/OrdersDbContextModelSnapshot.cs)) {
+            dotnet ef migrations add OrdersInitial --project src/Modules/SaaS.Orders --context OrdersDbContext --output-dir Migrations --configuration Release
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if ((Select-String -Path src/Platform/SaaS.Auditing/AuditDbContext.cs -SimpleMatch 'ChangesJson') -and -not (Get-ChildItem src/Platform/SaaS.Auditing/Migrations -Filter '*BusinessDetails.cs')) {
+            dotnet ef migrations add BusinessDetails --project src/Platform/SaaS.Auditing --context AuditDbContext --output-dir Migrations --configuration Release
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- ':(glob)**/packages.lock.json' docs/compatibility/resolved-packages.json
+          if (Test-Path src/Modules/SaaS.Orders/Migrations) { git add -- src/Modules/SaaS.Orders/Migrations }
+          git add -- src/Platform/SaaS.Auditing/Migrations
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 1) {
+            git commit -m 'build(m4): generate pinned locks and owned EF migration inputs'
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            git push origin HEAD:refs/heads/codex/m4-orders
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } elseif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rev-parse HEAD
+      - name: Policy regressions on the generated source
+        shell: pwsh
+        run: |
+          dotnet restore SaasOne.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build SaasOne.slnx --configuration Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test tests/Unit/SaaS.UnitTests --configuration Release --no-build --filter FullyQualifiedName~M4PolicyTests --logger trx --results-directory artifacts/m4-development
+          exit $LASTEXITCODE
+      - name: Retain exact source and development evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/m4-development
+          git rev-parse HEAD > artifacts/m4-development/commit.txt
+          git archive --format=tar.gz -o artifacts/m4-development/source.tar.gz HEAD
+          git status --short > artifacts/m4-development/working-tree.txt
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m4-development-${{ github.sha }}
+          path: artifacts/m4-development
+          if-no-files-found: error
+          retention-days: 7
