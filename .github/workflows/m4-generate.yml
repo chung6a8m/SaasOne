@@ -1,5 +1,5 @@
-# Temporary feature-branch development generation. This is NOT an acceptance gate.
-# It may change only generated NuGet inventory/locks and owned EF migrations on this branch.
+# Temporary feature-branch development executor. NOT an acceptance gate; removed before review.
+# It applies the reviewed patch payload, then generates pinned inputs, only on this feature branch.
 name: M4 development inputs
 on:
   push:
@@ -13,11 +13,25 @@ jobs:
   generate:
     if: github.repository == 'chung6a8m/SaasOne' && github.ref == 'refs/heads/codex/m4-orders'
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ github.sha }}
+      - name: Apply checked source patch on the isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if test -f scripts/m4-development.patch; then
+            git apply --check scripts/m4-development.patch
+            git apply scripts/m4-development.patch
+            rm scripts/m4-development.patch
+            git add -A -- src tests scripts docs README.md SaasOne.slnx
+            git commit -m 'build(m4): apply checked feature-branch development patch'
+            git push origin HEAD:refs/heads/codex/m4-orders
+          fi
       - uses: ./.github/actions/pinned-toolchain
       - name: Generate locked inputs and owned snapshots
         shell: pwsh
@@ -32,8 +46,6 @@ jobs:
             dotnet ef migrations add BusinessDetails --project src/Platform/SaaS.Auditing --context AuditDbContext --output-dir Migrations --configuration Release
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- ':(glob)**/packages.lock.json' docs/compatibility/resolved-packages.json
           if (Test-Path src/Modules/SaaS.Orders/Migrations) { git add -- src/Modules/SaaS.Orders/Migrations }
           git add -- src/Platform/SaaS.Auditing/Migrations
@@ -45,7 +57,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } elseif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git rev-parse HEAD
-      - name: Policy regressions on the generated source
+      - name: Development policy and SQL regressions
         shell: pwsh
         run: |
           dotnet restore SaasOne.slnx --locked-mode
@@ -53,7 +65,10 @@ jobs:
           dotnet build SaasOne.slnx --configuration Release --no-restore
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet test tests/Unit/SaaS.UnitTests --configuration Release --no-build --filter FullyQualifiedName~M4PolicyTests --logger trx --results-directory artifacts/m4-development
-          exit $LASTEXITCODE
+          $policyExit = $LASTEXITCODE
+          ./scripts/m4-sql-fixture.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          exit $policyExit
       - name: Retain exact source and development evidence
         if: always()
         shell: bash
@@ -66,6 +81,9 @@ jobs:
         if: always()
         with:
           name: m4-development-${{ github.sha }}
-          path: artifacts/m4-development
+          path: |
+            artifacts/m4-development
+            artifacts/test-results/m4-poc
+            artifacts/verification/m4-poc.json
           if-no-files-found: error
           retention-days: 7
