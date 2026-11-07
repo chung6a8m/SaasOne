@@ -8,6 +8,10 @@ Use Windows x64 with Docker Desktop Linux containers, or Linux x64 with Docker. 
 
 ```powershell
 # From the repository root, on the M6 branch with all changes committed:
+# Syntax-only preflight: no Docker, SQL Server, or .NET execution.
+pwsh -NoProfile -File scripts/check-powershell-syntax.ps1
+$LASTEXITCODE  # must be 0 before running either verification scope
+
 pwsh -NoProfile -File scripts/local-verify.ps1 -Scope Full
 $LASTEXITCODE
 ```
