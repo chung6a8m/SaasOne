@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 namespace SaaS.Tenancy.Data;
 
-public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : DbContext(options)
+public sealed partial class PlatformDbContext(DbContextOptions<PlatformDbContext> options) : DbContext(options)
 {
     public DbSet<TenantRegistration> Tenants => Set<TenantRegistration>();
     public DbSet<ProvisioningOperation> Operations => Set<ProvisioningOperation>();
@@ -11,6 +11,7 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.HasDefaultSchema("platform");
+        IdentityModel.Configure(model);
         var tenant = model.Entity<TenantRegistration>();
         tenant.ToTable("Tenants", table =>
         {

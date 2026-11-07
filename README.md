@@ -1,8 +1,8 @@
 # SaasOne
 
-Reusable Orchard Core multi-tenant SaaS foundation. The reviewed [roadmap](docs/roadmap/saas-orchard-roadmap-v1.md) is the specification. This branch implements the M0 foundation and **M1 tenancy/provisioning**: a fixed platform database, isolated customer databases, private maintenance commands, native Orchard prefix routing and fail-closed readiness.
+Reusable Orchard Core multi-tenant SaaS foundation. The reviewed [roadmap](docs/roadmap/saas-orchard-roadmap-v1.md) is the specification. This branch implements M0 foundation, M1 tenancy/provisioning and **M2 central identity**: a fixed platform database, isolated customer databases, private maintenance commands, native Orchard prefix routing, fail-closed readiness, central login, tenant SSO and tenant-bound API tokens.
 
-Identity/SSO remains [Conditional — pending M2 PoC](docs/adr/0001-identity-and-membership.md). There are no customer business APIs, Orders/OrderApprovals implementation, public setup/provisioning endpoint or tenant CMS administration. No production deployment is implied.
+Identity uses native Orchard Users/OpenIddict at Default, with independent customer cookies and server-side membership/session/grant validation. The [identity ADR](docs/adr/0001-identity-and-membership.md) remains Conditional pending owner architecture/security acceptance; implementation evidence is recorded in [M2 verification](docs/verification/m2.md). There are no Orders/OrderApprovals or customer business APIs, public setup/provisioning endpoints, or tenant CMS administration. No production deployment is implied.
 
 ## Fresh clone without Visual Studio
 
@@ -16,67 +16,76 @@ pwsh --version
 dotnet tool restore
 dotnet restore SaasOne.slnx --locked-mode
 dotnet build SaasOne.slnx --configuration Release --no-restore
-dotnet test SaasOne.slnx --configuration Release --no-build --filter 'Category!=SqlM1' --logger trx --results-directory artifacts/test-results/m0
+dotnet test SaasOne.slnx --configuration Release --no-build --filter 'Category!=SqlM1&Category!=SqlM2' --logger trx --results-directory artifacts/test-results/m0
 pwsh -NoProfile -File ./scripts/check.ps1 -Scope M0
 ```
 
-The retained `M0` command is the mandatory foundation gate, including the new M1 non-SQL tests. It repeats locked restore/build/tests, rejects empty/skipped evidence, checks restored project/package **and native Orchard feature** dependencies, and scans tracked configuration for secrets. Native nonzero exit codes fail the gate. `artifacts/verification/m0.json` records the tested SHA, environment, commands and actual suite counts.
+The retained `M0` command is the mandatory foundation gate. It repeats locked restore/build/tests, rejects empty/skipped evidence, checks restored project/package **and native Orchard feature** dependencies, and scans tracked configuration for secrets. Native nonzero exit codes fail the gate. `artifacts/verification/m0.json` records the tested SHA, environment, commands and actual suite counts.
 
-The `SqlM1` category is excluded only from this non-SQL command. It is mandatory in its own real SQL gate below. Running all tests without that filter requires the private fixture environment and fails when SQL is absent; SQL tests are never silently skipped.
+`SqlM1` and `SqlM2` are excluded only from the non-SQL command. Both are mandatory in the complete SQL gate below. Running all tests without that filter requires the private fixture environment and fails when SQL is absent; SQL tests are never silently skipped.
 
-## Mandatory real SQL gates
-
-After the foundation build, run both isolated fixtures:
+## Mandatory complete gate
 
 ```powershell
-pwsh -NoProfile -File ./scripts/sql-fixture.ps1
-pwsh -NoProfile -File ./scripts/m1-sql-fixture.ps1
+pwsh -NoProfile -File ./scripts/check-m2.ps1
+if ($LASTEXITCODE -ne 0) { throw 'M2 verification failed.' }
 ```
 
-Both require Docker, bind to loopback, create fresh containers from the pinned SQL Server 2022 Developer image/build **16.0.4305.5**, generate disposable credentials, and remove their containers before publishing success. They never target an existing deployment. SQL Developer is for development/testing only.
+This runs the M0 foundation, both EF snapshot checks, restricted SQL smoke, all M1 SQL/Orchard tests and all M2 native-store/HTTP/production-composition tests. The fixtures require Docker, bind to loopback, create fresh containers from the pinned SQL Server 2022 Developer image/build **16.0.4305.5**, generate disposable credentials and remove their containers before publishing success. They never target an existing deployment. SQL Developer is for development/testing only.
 
-The M0 fixture proves exact provider/engine/version/database/privilege connectivity, including a wrong-target negative probe. Its expected database is `saas_m0_smoke`. For an operator-prepared matching test instance, inject `SAAS_SQL_SMOKE_CONNECTION` from a secret manager and run `scripts/check.ps1 -Scope SqlSmoke`; never paste credentials into commands or Git.
+For focused regression after a foundation build, `scripts/sql-fixture.ps1`, `scripts/m1-sql-fixture.ps1` and `scripts/m2-sql-fixture.ps1` run the individual disposable fixtures. They do not replace the complete gate for milestone acceptance.
 
-The M1 fixture covers private platform bootstrap, four real customer databases, actual Orchard routing, idempotent retry, concurrent/stale operation rejection, lifecycle preservation, immutable identity, missing/corrupt baseline rejection, forbidden cross-database/DDL access and fresh runtime-only process restarts. It requires at least 48 executed passing cases, validates named mandatory cases including six cold-process isolation combinations, and writes `artifacts/verification/m1-sql.json` plus TRX evidence. Separate HTTP/maintenance process tests distinguish preloaded-secret registration from late-secret delivery requiring restart. A missing SQL prerequisite, skipped test, failed assertion or cleanup failure cannot produce PASS.
+The SQL smoke proves provider/engine/version/database/privilege connectivity, including an expected privileged-connection rejection before the restricted-user positive probe. Its database is `saas_m0_smoke`. For a separately prepared matching test instance, inject `SAAS_SQL_SMOKE_CONNECTION` from a secret manager and run `scripts/check.ps1 -Scope SqlSmoke`; never paste credentials into commands or Git.
+
+M1 covers private platform bootstrap, four customer databases, actual Orchard routing, idempotent retry, concurrent/stale operation rejection, lifecycle preservation, immutable identity, corrupt-baseline rejection, forbidden cross-database/DDL access and runtime-only process restarts. M2 adds real native login/discovery/code redemption/PKCE, SSO, cryptographic JWT validation, tenant binding, persistent authority and revocation, strict refresh concurrency/reuse/lost-response behavior, key reload, private CLI and the production host's registry/readiness boundary. TestServer replaces HTTP transport, not authentication or SQL stores. Neither fixture certifies an actual deployment's DNS, TLS listener, proxy logging or secret-manager access controls.
+
+Missing prerequisites, missing mandatory cases, duplicate/zero execution, skipped/failing tests or cleanup failures cannot produce PASS. JSON and TRX evidence remain under `artifacts/verification` and `artifacts/test-results`; the historical `m2-poc` path now contains the complete M2 acceptance suite.
 
 ## Provisioning and runtime
 
-Read the [M1 runbook](docs/runbooks/m1-tenancy-provisioning.md) before injecting secrets or running maintenance. Bootstrap and provisioning use **separate private processes**, not HTTP. Runtime, operator, per-database migrator and server provisioner credentials have different privileges. The runtime process must receive only runtime secrets.
+Read the [M1 runbook](docs/runbooks/m1-tenancy-provisioning.md) before injecting secrets or running maintenance. Bootstrap and provisioning use separate private processes, not HTTP. Runtime, operator, per-database migrator and server provisioner credentials have different privileges.
 
 ```powershell
-# IDs and expiry below come from a persisted private deployment inventory.
+# IDs and expiry come from a persisted private deployment inventory.
 ./scripts/tenant-provision.ps1 -Bootstrap -InstallationId $installationId
 ./scripts/tenant-provision.ps1 -TenantId $tenantId -OperationId $operationId -Slug alpha -Plan Standard -ExpiresAt $expiresAt
 ```
 
-Retry uses the same complete request tuple. The supported M1 coordinator uses one trusted operations machine, a durable local process lock, a non-expiring SQL session lock and prior-owner SQL-session reconciliation. Cross-host takeover and unidentified existing databases are blocked, not automatically adopted. Owner review of these constraints is required before deployment.
+Retry uses the same complete request tuple. The M1 coordinator uses one trusted operations machine, a durable local process lock, a non-expiring SQL session lock and prior-owner SQL-session reconciliation. Cross-host takeover and unidentified existing databases are blocked. Owner review of these constraints is required before deployment.
 
-`GET /health/live` proves process liveness only. After private provisioning, `GET /health/ready` checks the platform baseline, `GET /{slug}/health/ready` checks the selected customer's readiness, and `GET /{slug}/` serves a minimal tenant-prefixed foundation page. Setup, admin, feature, template, recipe and upload HTTP surfaces remain closed. Unknown/unready tenants never fall through to Default customer business data. A customer's invalid registration or runtime secret does not prevent valid tenants/Default from loading; platform failures still close all readiness.
+M1 baseline mode remains available when identity is not enabled: `GET /health/live` proves liveness only, readiness validates the platform/customer baseline, and `GET /{slug}/` serves the foundation page. Setup, admin, feature, template, recipe and upload surfaces remain closed. Unknown/unready tenants never fall through to Default customer business data.
 
-**Secret delivery is environment-only.** A newly completed tenant can be registered without restarting HTTP only when its runtime secret was injected BEFORE that HTTP process started. A secret added later to the maintenance/parent environment is not available in the running HTTP process: update its runtime-only deployment environment and perform a controlled restart/container recreation. M1 does not claim dynamic secret delivery or zero-downtime provisioning. See the runbook for the two supported sequences.
+For M2, follow the [identity runbook](docs/runbooks/m2-identity.md): provision first, privately run `identity-init`, explicitly enroll native accounts and memberships, and then start HTTP with `SAAS_IDENTITY_ENABLED=true`. Supply persisted signing/encryption certificates, a persistent protected Data Protection key ring, canonical HTTPS issuer and independent tenant client secrets. Do not enable identity through the HTTP-only port-5080 development shortcut. Missing state is a stop condition, not permission for the HTTP process to migrate or seed.
 
-`Standard` and `Approval` currently share the reviewed foundation profile. M1 records the selected plan but does not fake business modules scheduled for later milestones. TenantContext, customer connection, prefixed links and cache partition derive from the actual routed shell, not request-supplied tenant identifiers.
+The HTTP process receives only restricted platform/customer runtime connections and identity runtime configuration, never provisioner/operator/migrator credentials. The same production composition is exercised by the M2 acceptance fixture with all privileged connection variables removed. Central `/account/login` and `/account/tenants` provide login and tenant choice. `/{slug}/account/login` runs the native OIDC flow, `/{slug}/account` is the tenant session view, and `GET /{slug}/api/v1/identity` is the bearer-only protected probe. Callback and logout destinations must match the authoritative registry before native redirect handling.
+
+Private identity commands include `identity-init`, `identity-verify`, `identity-client`, `identity-enroll`, `identity-membership`, `identity-account` and `identity-tenant`; see the runbook for exact arguments and credential requirements. Enrollment passwords are injected through a one-command environment variable, never argv. A completed initialization retry is read-only verification. Registering a newly provisioned tenant's client is a separate command, not a side effect of startup or retry.
+
+Secret delivery is environment-only. A new tenant can become available without HTTP restart only when its runtime connection and identity client secret were injected before that process started. Later parent/maintenance environment changes are not visible inside a running process; update the deployment environment and perform a controlled restart/container recreation. There is no claim of dynamic secret delivery or zero-downtime provisioning.
+
+`Standard` and `Approval` retain the reviewed foundation profile; later milestones implement business modules. TenantContext, selected customer connection and prefixed links derive from the actual routed shell, not a header/body/token-selected database. Roles, per-user allow/deny and the full operations UI belong to M3.
 
 ## Development and repository map
 
-`pwsh -NoProfile -File scripts/dev.ps1 -Action Setup` restores the locked baseline. `-Action Run` starts the host on loopback port 5080; without runtime secrets its business/readiness surfaces stay closed. `-Action Check` runs the foundation gate.
+`pwsh -NoProfile -File scripts/dev.ps1 -Action Setup` restores the locked baseline. `-Action Run` starts baseline mode on loopback port 5080; without runtime secrets business/readiness stay closed. M2 requires a separately configured HTTPS listener and trusted identity configuration. `-Action Check` runs the foundation gate.
 
 | Path | Responsibility |
 |---|---|
-| `src/SaaS.Web` | Composition root, private CLI, native Orchard adapter and HTTP readiness boundary |
-| `src/Platform/SaaS.Tenancy` | Registry, operation coordination, identity, owned EF contexts and migrations |
-| `src/Platform` | Abstractions, Identity, AccessControl and Auditing module boundaries |
+| `src/SaaS.Web` | Composition root, private CLI, Orchard adapter and HTTP readiness/identity boundary |
+| `src/Platform/SaaS.Tenancy` | Registry, operation coordination, immutable identity, platform-owned EF contexts/migrations |
+| `src/Platform/SaaS.Identity` | Native identity integration, dynamic authority, sessions, JWT checks and refresh rotation |
+| `src/Platform` | Abstractions, AccessControl and Auditing boundaries |
 | `src/Themes/SaaS.Theme.App` | Platform-controlled shared theme boundary |
 | `tools/SaaS.Build`, `tools/SaaS.SqlSmoke` | Verification tooling, never runtime tenant services |
-| `tests/Unit`, `tests/Architecture` | Behavioral, real SQL, native-feature, dependency and evidence tests |
-| `docs/verification`, `docs/runbooks` | Source-bound verification records and private operational procedures |
+| `tests/Unit`, `tests/Architecture` | Behavioral, real SQL/HTTP, native-feature, dependency and evidence tests |
+| `docs/verification`, `docs/runbooks` | Source-bound results and private operational procedures |
 
-Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility matrix](docs/compatibility/m0-matrix.md), [M0 decision register](docs/decisions/m0-register.md), [M0 evidence](docs/verification/m0.md) and [M1 evidence](docs/verification/m1.md). Platform/theme must not depend directly or transitively on business modules, including mixed feature-to-package paths. Tenancy owns the `platform` and `tenancy` EF streams; Orchard owns its native tables/migration record. Runtime never applies EF migrations.
+Read [AGENTS.md](AGENTS.md), [conventions](docs/conventions.md), [compatibility matrix](docs/compatibility/m0-matrix.md), [M0 decisions](docs/decisions/m0-register.md), [M0 evidence](docs/verification/m0.md), [M1 evidence](docs/verification/m1.md) and [M2 evidence](docs/verification/m2.md). Platform/theme must not depend directly or transitively on business modules. Tenancy owns the `platform`, `identity` and `tenancy` EF model streams; Orchard owns native tables/history. Runtime never applies EF migrations.
 
 ## CI and dependency maintenance
 
-The existing `.github/workflows/ci.yml` foundation/SQL jobs remain. `.github/workflows/m1.yml` adds the full M1 gate on the implementation branch, `main`, and pull requests. It uses read-only repository permissions, checks retained migration snapshots and PowerShell syntax, runs both SQL fixtures, and uploads SHA-scoped evidence and sanitized logs. No deployment secrets are needed.
+The foundation and M1 workflows remain; `.github/workflows/m2.yml` runs the full M2 gate on PRs into `main`, pushes to `main` and explicit dispatch. All retained verification has read-only repository permissions and pinned actions. The temporary generated-input write workflow is removed. Artifacts contain JSON/TRX evidence, not raw stdout or masking directives. No deployment secrets are needed.
 
-Normal builds do not rewrite locks. After a reviewed dependency change, run `scripts/update-locks.ps1`, inspect lock/resolved-graph changes, update the matrix/rationale and rerun every gate. Do not bypass NuGet audit. M1 retains the M0 package pins; dormant OpenID dependencies are explicitly unavailable and cannot enter the enabled M1 profile. Rich text, arbitrary scripts and uploads remain disabled.
+Normal builds do not rewrite locks. After a reviewed dependency change, run `scripts/update-locks.ps1`, inspect lock/resolved-graph changes, update the compatibility rationale and rerun every gate. Do not bypass NuGet audit. M2 enables the pinned native identity dependencies only in its explicit Default identity profile; it does not enable a customer CMS. Rich text, arbitrary scripts and uploads remain disabled.
 
-M1 owner review and merge are separate from implementation verification. M2–M6 acceptance gates remain open.
+Implementation verification, owner architecture/security acceptance and merge are separate. PR #4 carries the latest source-bound evidence; ADR 0001 is not automatically promoted to Accepted. M3–M7 remain outside this implementation.

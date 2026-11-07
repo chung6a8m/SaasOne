@@ -13,7 +13,9 @@ public static class MaintenanceCommand
         try
         {
             var service = new TenancyProvisioning(new TenancyConnections(), new OrchardMaintenance());
-            if (args.Length == 2 && args[0] == "bootstrap" && Guid.TryParseExact(args[1], "D", out var installationId))
+            if (args.Length > 0 && args[0].StartsWith("identity-", StringComparison.Ordinal))
+                await IdentityMaintenanceCommand.ExecuteAsync(args, cancellationToken);
+            else if (args.Length == 2 && args[0] == "bootstrap" && Guid.TryParseExact(args[1], "D", out var installationId))
                 await service.BootstrapAsync(installationId, cancellationToken);
             else if (args.Length > 0 && args[0] == "provision")
                 await service.ProvisionAsync(ProvisionRequest.Parse(args), cancellationToken);

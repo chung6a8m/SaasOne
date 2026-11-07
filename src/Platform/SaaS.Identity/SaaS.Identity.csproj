@@ -1,3 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup><ProjectReference Include="../SaaS.Abstractions/SaaS.Abstractions.csproj" /></ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../SaaS.Abstractions/SaaS.Abstractions.csproj" />
+    <ProjectReference Include="../SaaS.Tenancy/SaaS.Tenancy.csproj" />
+    <PackageReference Include="OrchardCore.Infrastructure" />
+    <PackageReference Include="OrchardCore.OpenId" />
+    <PackageReference Include="OrchardCore.Users" />
+    <PackageReference Include="OrchardCore.Roles" />
+    <PackageReference Include="OrchardCore.Settings" />
+  </ItemGroup>
 </Project>

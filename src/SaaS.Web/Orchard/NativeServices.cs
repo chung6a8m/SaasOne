@@ -11,7 +11,9 @@ public static class NativeServices
     {
         services.AddSingleton(new TenancyConnections());
         services.AddScoped(provider => TenancyConnections.PlatformContext(provider.GetRequiredService<TenancyConnections>().Platform("runtime")));
-        var orchard = services.AddOrchardCore().AddMvc().AddDataAccess().AddDataStorage();
+        // Native Users depends on the framework's entity id generator, even when
+        // an explicit user id is supplied. Share the same composition in all hosts.
+        var orchard = services.AddOrchardCore().AddMvc().AddIdGeneration().AddDataAccess().AddDataStorage();
         services.AddSingleton(settings);
         orchard.ConfigureServices(tenantServices =>
         {

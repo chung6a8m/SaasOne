@@ -1,0 +1,42 @@
+name: M2 identity acceptance
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m2-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  poc-gate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Foundation, inherited SQL gates and complete M2 identity acceptance
+        shell: pwsh
+        # Stream directly to the runner so add-mask directives are processed.
+        # Never archive raw stdout: masking directives contain ephemeral secrets.
+        run: ./scripts/check-m2.ps1
+      - name: Retain machine-readable gate evidence even on failure
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($file in @('m0.json', 'sql-command.json', 'm1-sql.json', 'm2-poc.json')) {
+              $path = Join-Path artifacts/verification $file
+              if (Test-Path $path) { Get-Content $path -Raw }
+          }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m2-verification-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results
+          if-no-files-found: error
