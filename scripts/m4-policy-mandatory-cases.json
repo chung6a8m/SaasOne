@@ -22,5 +22,5 @@
   "SaaS.UnitTests.M4ModelTests.Orders_owns_only_its_schema_with_database_rowversion_revision_and_unique_number",
   "SaaS.UnitTests.M4ModelTests.Order_history_and_receipts_reject_mutation_before_opening_a_connection",
   "SaaS.UnitTests.M4ModelTests.Context_cannot_erase_a_recorded_obligation_change_creator_or_skip_revisions",
-  "SaaS.UnitTests.M4ModelTests.Product_routes_are_explicit_and_never_enable_decision_CMS_or_unbounded_resource_paths"
+  "SaaS.UnitTests.M4ModelTests.Product_routes_are_explicit_and_never_enable_CMS_or_unbounded_resource_paths"
 ]

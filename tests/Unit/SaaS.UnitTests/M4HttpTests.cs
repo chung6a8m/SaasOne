@@ -18,7 +18,7 @@ public sealed partial class M4HttpTests(M1SqlFixture fixture) : IClassFixture<M1
     private M1SqlEnvironment Environment => fixture.Environment;
     private TestTenant Alpha => Environment.Tenants.Single(x => x.Slug == "alpha");
     private static readonly Guid SalesRole = Guid.Parse("d34d777e-ec25-413b-bdba-083e4ff18eab");
-    private static AclDocument SalesAcl(Guid actor) => new([new(SalesRole, "Orders operator",
+    internal static AclDocument SalesAcl(Guid actor) => new([new(SalesRole, "Orders operator",
         OrderPermissions.Definitions.Select(x => new PermissionGrant(x.Code, PermissionEffect.Allow)).ToArray())], [new(actor, SalesRole)], []);
 
     [Fact]
@@ -37,7 +37,7 @@ public sealed partial class M4HttpTests(M1SqlFixture fixture) : IClassFixture<M1
         using var response = await client.GetAsync("/alpha/api/v1/orders", Ct);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
-    private async Task<HttpHarness> HttpAsync(bool grant = true, bool approval = false)
+    internal async Task<HttpHarness> HttpAsync(bool grant = true, bool approval = false)
     {
         var previous = System.Environment.GetEnvironmentVariable("SAAS_ACCESS_CONTROL_ENABLED");
         System.Environment.SetEnvironmentVariable("SAAS_ACCESS_CONTROL_ENABLED", "true");
@@ -59,6 +59,8 @@ public sealed partial class M4HttpTests(M1SqlFixture fixture) : IClassFixture<M1
             foreach (var tenant in Environment.Tenants)
             {
                 await using var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(tenant), Ct);
+                if (Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT CASE WHEN OBJECT_ID('approvals.Requests') IS NULL THEN 0 ELSE 1 END", Ct)) == 1)
+                    await SqlOperations.ExecuteAsync(sql, "DELETE FROM [approvals].[Decisions]; DELETE FROM [approvals].[Requests];", Ct);
                 if (Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT CASE WHEN OBJECT_ID('orders.Orders') IS NULL THEN 0 ELSE 1 END", Ct)) == 1)
                     await SqlOperations.ExecuteAsync(sql, "DELETE FROM [orders].[Receipts]; DELETE FROM [orders].[Revisions]; DELETE FROM [orders].[Orders]; DELETE FROM [audit].[Events] WHERE [Action] LIKE 'Orders.%';", Ct);
                 if (Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT CASE WHEN OBJECT_ID('access.State') IS NULL THEN 0 ELSE 1 END", Ct)) == 1)
@@ -84,7 +86,7 @@ public sealed partial class M4HttpTests(M1SqlFixture fixture) : IClassFixture<M1
             throw;
         }
     }
-    private async Task SeedAsync(TestTenant tenant, AclDocument document)
+    internal async Task SeedAsync(TestTenant tenant, AclDocument document)
     {
         await using var platform = TenancyConnections.PlatformContext(Environment.PlatformAdmin);
         var current = await platform.Tenants.AsNoTracking().SingleAsync(x => x.Id == tenant.Id, Ct);
@@ -102,7 +104,7 @@ public sealed partial class M4HttpTests(M1SqlFixture fixture) : IClassFixture<M1
         foreach (var value in document.Overrides) db.UserGrants.Add(new UserGrantRow { UserId = value.UserId, Permission = value.Permission, Effect = value.Effect });
         await db.SaveChangesAsync(Ct);
     }
-    private sealed class HttpHarness(IdentityHttpFixture http, string? previous) : IAsyncDisposable
+    internal sealed class HttpHarness(IdentityHttpFixture http, string? previous) : IAsyncDisposable
     {
         public IdentityHttpFixture Http { get; } = http;
         public async ValueTask DisposeAsync()

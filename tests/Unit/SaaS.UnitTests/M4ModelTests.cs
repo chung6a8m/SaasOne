@@ -49,14 +49,14 @@ public sealed class M4ModelTests
         Assert.Equal("order_delete_forbidden", Assert.Throws<InvalidOperationException>(() => db.SaveChanges()).Message);
     }
     [Fact]
-    public void Product_routes_are_explicit_and_never_enable_decision_CMS_or_unbounded_resource_paths()
+    public void Product_routes_are_explicit_and_never_enable_CMS_or_unbounded_resource_paths()
     {
         var routes = new ProductApplicationEndpoints(); var id = Guid.NewGuid().ToString("D");
         foreach (var path in new[] { "/orders", "/orders/new", "/orders/" + id, "/api/v1/orders", "/api/v1/orders/" + id, "/access" })
             Assert.True(routes.Matches(path, "GET"));
         foreach (var path in new[] { "/orders/new", "/orders/" + id + "/edit", "/api/v1/orders", "/api/v1/orders/" + id + "/submit" })
             Assert.True(routes.Matches(path, "POST"));
-        foreach (var path in new[] { "/orders/" + id + "/approve", "/api/v1/orders/" + id + "/reject", "/orders/not-a-guid", "/api/v1/orders/" + Guid.Empty, "/orders/" + id + "/edit/extra", "/admin", "/api/features", "/Setup" })
+        foreach (var path in new[] { "/orders/not-a-guid", "/api/v1/orders/" + Guid.Empty, "/orders/" + id + "/edit/extra", "/admin", "/api/features", "/Setup" })
         { Assert.False(routes.Matches(path, "GET")); Assert.False(routes.Matches(path, "POST")); }
         Assert.False(routes.Matches("/api/v1/orders/" + id, "DELETE"));
     }

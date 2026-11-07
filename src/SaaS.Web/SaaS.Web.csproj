@@ -12,6 +12,7 @@
     <ProjectReference Include="../Platform/SaaS.AccessControl/SaaS.AccessControl.csproj" />
     <ProjectReference Include="../Platform/SaaS.Auditing/SaaS.Auditing.csproj" />
     <ProjectReference Include="../Modules/SaaS.Orders/SaaS.Orders.csproj" />
+    <ProjectReference Include="../Modules/SaaS.OrderApprovals/SaaS.OrderApprovals.csproj" />
     <ProjectReference Include="../Themes/SaaS.Theme.App/SaaS.Theme.App.csproj" />
   </ItemGroup>
 </Project>

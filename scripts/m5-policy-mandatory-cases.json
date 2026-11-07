@@ -1,0 +1,5 @@
+[
+  "SaaS.UnitTests.M5ModelTests.Approvals_owns_only_its_schema_and_enforces_one_decision_per_submitted_revision",
+  "SaaS.UnitTests.M5ModelTests.Approval_requests_and_decisions_are_append_only_before_opening_a_connection",
+  "SaaS.UnitTests.M5RouteTests.Product_exposes_only_exact_POST_decision_routes_for_the_tenant_authority_to_gate"
+]
