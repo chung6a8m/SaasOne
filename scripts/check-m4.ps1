@@ -18,10 +18,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Inherited M0/M1/M2/M3 gates failed.' }
     . (Join-Path $PSScriptRoot 'm3-evidence-inventory.ps1')
     $required = @(Get-Content scripts/m4-policy-mandatory-cases.json -Raw | ConvertFrom-Json)
-    $policy = @(foreach ($file in Get-ChildItem artifacts/test-results/m0 -Filter *.trx) {
-        [xml]$trx = Get-Content $file.FullName -Raw
-        @($trx.TestRun.Results.UnitTestResult) | Where-Object { $_.testName -cmatch '^SaaS\.UnitTests\.M4' }
-    })
+    $policy = @(Get-M3PolicyTrxResults -ResultsDirectory 'artifacts/test-results/m0' -TestNamePattern '^SaaS\.UnitTests\.M4')
     $inventory = Get-M3EvidenceInventory -Results $policy -Required $required
     $report.policyCases = $inventory.mandatoryCases
     if (-not $inventory.valid) { throw 'Every mandatory M4 policy/model case must execute exactly once and pass.' }
