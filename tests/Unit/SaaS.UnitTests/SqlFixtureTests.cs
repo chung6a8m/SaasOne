@@ -110,6 +110,20 @@ public sealed class SqlFixtureTests
         Assert.False(fixture.Exists("sql-command.json"));
     }
 
+    [Fact]
+    public async Task Pulled_SQL_image_with_wrong_digest_is_rejected_before_SQL_execution()
+    {
+        using var fixture = new FakeSqlFixture();
+        var result = await fixture.RunAsync("untrusted-after-pull");
+        Assert.True(result.ExitCode != 0, result.Output);
+        Assert.True(fixture.Pulled);
+        using var report = fixture.ReadReport();
+        Assert.Equal("BLOCKED", report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(0, report.RootElement.GetProperty("passed").GetInt32());
+        Assert.False(fixture.Exists("sql-smoke.json"));
+        Assert.False(fixture.Exists("sql-command.json"));
+    }
+
     private sealed class FakeSqlFixture : IDisposable
     {
         private readonly string root = Path.Combine(Path.GetTempPath(), "saas-m0-fixture-" + Guid.NewGuid().ToString("N"));
@@ -205,15 +219,15 @@ public sealed class SqlFixtureTests
             case "$1" in
               pull)
                 if [ "$FAKE_DOCKER_MODE" = "pull-fail" ] || [ "$FAKE_DOCKER_MODE" = "cached-pull-fail" ]; then exit 42; fi
-                if [ "$FAKE_DOCKER_MODE" = "uncached-pull" ]; then echo acquired > "$FAKE_DOCKER_PULL_MARKER"; fi
+                if [ "$FAKE_DOCKER_MODE" = "uncached-pull" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; then echo acquired > "$FAKE_DOCKER_PULL_MARKER"; fi
                 ;;
               run) echo fake-container ;;
               exec) exit 0 ;;
               port) echo 127.0.0.1:31433 ;;
               image)
                 if [ "$FAKE_DOCKER_MODE" = "pull-fail" ]; then exit 12; fi
-                if [ "$FAKE_DOCKER_MODE" = "uncached-pull" ] && [ ! -f "$FAKE_DOCKER_PULL_MARKER" ]; then exit 12; fi
-                if [ "$FAKE_DOCKER_MODE" = "untrusted-cache" ]; then
+                if { [ "$FAKE_DOCKER_MODE" = "uncached-pull" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; } && [ ! -f "$FAKE_DOCKER_PULL_MARKER" ]; then exit 12; fi
+                if [ "$FAKE_DOCKER_MODE" = "untrusted-cache" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; then
                   echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 else
                   echo mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
@@ -233,6 +247,7 @@ public sealed class SqlFixtureTests
                 if "%FAKE_DOCKER_MODE%"=="pull-fail" exit 42
                 if "%FAKE_DOCKER_MODE%"=="cached-pull-fail" exit 42
                 if "%FAKE_DOCKER_MODE%"=="uncached-pull" echo acquired>"%FAKE_DOCKER_PULL_MARKER%"
+                if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" echo acquired>"%FAKE_DOCKER_PULL_MARKER%"
                 exit /b 0
             )
             if "%~1"=="run" (echo fake-container & exit /b 0)
@@ -243,7 +258,12 @@ public sealed class SqlFixtureTests
                 if "%FAKE_DOCKER_MODE%"=="uncached-pull" (
                     if not exist "%FAKE_DOCKER_PULL_MARKER%" exit 12
                 )
+                if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" (
+                    if not exist "%FAKE_DOCKER_PULL_MARKER%" exit 12
+                )
                 if "%FAKE_DOCKER_MODE%"=="untrusted-cache" (
+                    echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                ) else if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" (
                     echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 ) else (
                     echo mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
