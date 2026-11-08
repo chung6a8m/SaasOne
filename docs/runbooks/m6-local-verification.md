@@ -35,6 +35,24 @@ $LASTEXITCODE  # must be 0
 
 This creates a separate candidate release package under `artifacts/releases` and is **not** M6 runtime acceptance. Only proceed to `scripts/local-verify.ps1 -Scope Full` once the standalone build succeeds; Full builds a fresh package tied to the same source SHA. Do not add `Microsoft.EntityFrameworkCore.Design` to the web deployment merely to work around an incorrect EF startup-project option.
 
+**RID restore isolation:** EF bundle internally invokes `dotnet publish --runtime`, which can extend tracked `packages.lock.json` with a runtime-specific dependency section. Release generation now creates a detached Git worktree at `artifacts/release-worktrees/<unique-id>` from the exact trusted HEAD and performs all package/build/EF operations there. It validates that any changed lockfiles are strictly in the disposable worktree, under known `src/**/packages.lock.json` paths, and preserve the original dependency graph and pinned package versions/hashes. A new target section may only match the selected release RID (`net10.0/win-x64` or `net10.0/linux-x64`). Unexpected changes cause the build to fail; the worktree is removed, and removal failure also fails the gate. The source working tree remains subject to the same clean-checkout and SHA checks. This is not a waiver for dependency updates: use `scripts/update-locks.ps1` and a reviewed commit if the baseline graph legitimately changes.
+
+Run the inexpensive lock-drift regression test first:
+
+```powershell
+pwsh -NoProfile -File scripts/test-m6-bundle-locks.ps1
+$LASTEXITCODE
+```
+
+**Recovering from the previous failed build:** Check `git status --short` and `git diff -- src` before discarding anything. If, and only if, the six modified lockfiles are the generated changes from the failed M6 release build and contain no intentional edits, restore just these paths from HEAD:
+
+```powershell
+git restore -- src/Modules/SaaS.OrderApprovals/packages.lock.json src/Modules/SaaS.Orders/packages.lock.json src/Platform/SaaS.Abstractions/packages.lock.json src/Platform/SaaS.AccessControl/packages.lock.json src/Platform/SaaS.Auditing/packages.lock.json src/Platform/SaaS.Tenancy/packages.lock.json
+git status --short
+```
+
+This is a one-time operator cleanup of the previous run, **not** an automated cleanup performed by verification. Never use `git reset --hard` to hide unreviewed source changes.
+
 ## SQL image preflight and intermittent registry errors
 
 All M0–M6 SQL fixtures use the same tag `mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04` and pin registry digest `sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718`. Each fixture first queries Docker's local `RepoDigests`. If the exact pinned registry digest exists, it uses the cached image without calling `docker pull`; otherwise, it pulls the tag and verifies the resulting digest **before starting SQL**. A cached tag with a missing/wrong digest fails closed (`BLOCKED:sql_image_digest_mismatch`), not silently accepted. The SQL fixtures also verify SQL Server product version `16.0.4305.5` (M1–M6).
