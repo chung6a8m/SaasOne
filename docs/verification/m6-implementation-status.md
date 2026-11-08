@@ -1,40 +1,37 @@
 # M6 implementation and verification status
 
-Status: **candidate implementation; NOT accepted, NOT production-ready**. Baseline: `a3de8981cd7033b31e3768c199891c4d25ef2fa8`. CI now runs a dedicated M6 full-acceptance workflow; only fresh results for the reviewed SHA count as runtime evidence.
+Status: **candidate implementation; NOT accepted, NOT production-ready**. Issue #10 is the acceptance gate and PR #11 contains the follow-up rehearsals. M7 acceptance remains blocked until G1–G5 have reviewed PASS evidence. Read `docs/runbooks/m6-issue-10-rehearsals.md` alongside the release/restore runbook.
 
 ## Implemented source
 
-The host composes six release streams, external EF bundles, idempotent SQL, immutable manifests and real Orchard verification. Tenant release/backup/restore reuse the common locks, registry CAS/fences, write gate and current-platform authorization. The platform constraint migration enables the existing Migrating operation kind; no historical migration is rewritten. Physical restore has durable source intent before the security claim, immutable source binding and identity verification before any migration/ACL work. Generic recovery cannot bypass an incomplete physical restore.
+The host composes six release streams, external EF bundles, idempotent SQL, immutable manifests and real Orchard verification. Tenant release/backup/restore reuse common locks, registry CAS/fences, the write gate and current-platform authorization. Physical restore persists source intent before the security claim and verifies immutable restored identity before migration/native/ACL work. Generic recovery cannot bypass an incomplete physical restore.
 
-Local verification provides a single entry point, isolated evidence directories, exact source/tool versions, inherited M0–M5 gates, mandatory-case validation, release packaging, real SQL fixtures, sanitized reports/TRX and a checksummed ZIP, including failed runs. M6 CI calls the full local verification entrypoint; no older milestone checks alone imply M6 acceptance.
+The full local entry point preserves inherited M0–M5 checks, exact source/tool versions, mandatory inventories, packaging, real SQL fixtures, sanitized reports/TRX and a checksummed ZIP, including failed runs. Earlier milestone checks alone never establish M6 acceptance.
 
-## Execution evidence in the authoring environment
+The inventory now contains **six M6 component facts and twenty SqlM6 facts**. Six additional SQL facts cover the real process-kill rehearsal, three signed-invalid-identity variants, the full offline platform coordinator and old HTTP refresh credentials after restore. Two OS storage jobs separately exercise restricted principals, retained keys and marker writer/crash/reopen behavior. Written tests and workflow definitions are not execution evidence.
 
-`dotnet`, `pwsh`, Docker and SQL Server are absent. Attempts to execute the test commands cannot start (shell exit 127). Consequently restore/build, PowerShell parsing, component tests, EF model-drift checks, bundle execution, inherited integration gates and all M6 SQL/HTTP tests are **NOT RUN / BLOCKED**, not PASS. No generated release binaries, TRX or acceptance result is asserted or checked in.
+## Evidence boundaries
 
-The source inventory contains six M6 component facts and fourteen SqlM6 facts; several facts loop through independent failure/lifecycle cases. Exact names are checked into `scripts/m6-policy-cases.json` and `scripts/m6-mandatory-cases.json`. Written tests are not executed evidence. The local full gate must discover each mandatory fact exactly once and pass it without skips.
+The historical PR #9 merge-tree `15112b3e41c48e2b52800544e610f3d55036ee7d` passed its existing 14 SqlM6 facts in run `42452218455`, as recorded in Issue #10. That run does not cover the new rehearsals and is not current sign-off.
 
-## Coverage and remaining acceptance work
+The authoring container has no dotnet, PowerShell, Docker or SQL Server. Local runtime execution is BLOCKED; fresh CI results at the reviewed SHA are required. Early PR #11 iterations exposed a test visibility error, PowerShell parser/hygiene failures and a marker-writer harness failure. Failed or cancelled attempts remain failure history, never acceptance proof. Current results and reviewed artifact identities belong in Issue #10 so a later source edit cannot silently inherit an older run's PASS.
 
-| Area | Source coverage | Required evidence |
+| Gate | Added source coverage | Evidence required before closure |
 |---|---|---|
-| Artifact trust | HMAC/tenant/chain/path/context/hash negative cases; pre-execution host verification | Component and PowerShell self-test results |
-| EF release | All six actual bundles, empty databases, previous migration baseline, repeat execution | SQL TRX, manifest, SQL, model-drift results |
-| Tenant release | Actual native verification, seven failure checkpoints, independent tenant progress, lifecycle conflicts | Real SQL/HTTP fixture results |
-| Physical restore | Real COPY_ONLY backup, cross-tenant/tamper rejection, durable intent, physical retries and approved alternate source while closed | Real SQL restore results and external audit/state evidence |
-| Security recovery | Current full ACL, active membership, removed role assignment/permission or Deny, old access token/cookie rejection and fresh-login denial | HTTP results, current-platform authority review |
-| Restored obligation | PendingApproval backup → approve → Standard → restore → explicit child upgrade → normal approval | Actual workflow results |
+| G1: process death during RESTORE | Real maintenance CLI, DMV observation, OS termination, SQL quiescence, immutable binding and authorized retry | Mandatory TRX plus `m6-restore-process.json`, audit/state assertions and source/package identities |
+| G2: signed invalid identity | Missing singleton, wrong TenantId and wrong nonce after physical restore; strict recovery-work spies | All three mandatory facts pass; HMAC/header/checksum verified first; no repair or recovery bypass |
+| G3: offline platform release | Owned runtime stop/start, live-session and tenant-lease exclusion, unknown history, actual pending audit/HTTP 503, resume/idempotence | Real SQL/host assertions pass; distinguish disposable host inventory from deployment host inventory |
+| G4: old HTTP credentials | Untouched old refresh after recovery, old cookie/JWT, fresh-login current ACL and independent Beta credentials | Mandatory HTTP/SQL fact passes without revoking the tested family beforehand |
+| G5: storage/runbook | Windows/Linux ACL negative and positive controls, wrong/missing/retained key, actual marker writer plus fresh-process reopen | Both OS reports and hashes pass, cleanup passes, operational limits reviewed; no implied power-loss or production certification |
 
-Additional targeted rehearsal/coverage remains before milestone sign-off: terminate the operating-system process while SQL RESTORE itself is in flight (checkpoint exceptions are not a substitute); restore a genuinely signed artifact whose database identity is missing/wrong and prove no EF/Orchard/ACL action ran; test the full offline platform-release coordinator, request barrier and competing operation paths; explicitly assert the old refresh-token HTTP flow after physical restore; review Windows/Linux protected-store ACLs, process-marker durability and operational key retention. These items must not be inferred from the existing fact count or a component-only PASS. Add regression cases where the first local run or review exposes gaps.
+All 20 mandatory SQL facts must be discovered/executed exactly once, with zero failures/skips. Validate the inherited gates, manifest trust, six EF bundles, native verification, lifecycle conflicts, approved alternate-source restore, current ACL and restored PendingApproval workflow as well as the new cases. Do not reduce the old inventory to make a new case pass.
 
-No independent reviewer or runtime host was available in the authoring session. Owner review and runtime verification remain pending. M6 and roadmap risks R2-01/R3-01/R3-02/R3-03 are not closed by this commit.
-
-## Next command
-
-From a clean checkout with the repository-pinned SDK/PowerShell and Docker:
+## Commands and owner review
 
 ```powershell
 pwsh -NoProfile -File scripts/local-verify.ps1 -Scope Full
 ```
 
-Return `artifacts/local-verify/<run-id>.zip` and its `.sha256`, including failure/blocked results. Review logs before sharing. Use `-Scope Components` only for an earlier build/component diagnosis; it cannot establish runtime acceptance. See the two M6 runbooks for details and operational limits.
+Review `artifacts/local-verify/<run-id>.zip` and `.sha256`, exact tested SHA, commands, logs/TRX/audit assertions and G1 evidence. Review the independent Windows/Linux `m6-storage-drill.json` and hashes from the storage workflow. Component-only scope cannot establish runtime acceptance.
+
+Issue #10 must link the final run attempts and retained artifacts with a reviewer decision before its checklist is completed. A green CI run still does not authorize arbitrary production deployment: real host inventory, filesystem guarantees, secret custody and backup retention remain operator responsibilities. M6 and roadmap risks R2-01/R3-01/R3-02/R3-03 are not closed by adding this source.

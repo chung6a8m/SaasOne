@@ -57,6 +57,12 @@ jobs:
         run: |
           pwsh -NoProfile -File scripts/m6-storage-drill.ps1 -DisposableHostAcknowledged
           exit $LASTEXITCODE
+      - name: Secret-free marker writer regression
+        if: always()
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/test-m6-marker-writer.ps1
+          exit $LASTEXITCODE
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
