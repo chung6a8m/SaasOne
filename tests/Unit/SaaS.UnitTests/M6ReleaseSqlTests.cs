@@ -110,6 +110,8 @@ public sealed class M6ReleaseSqlTests(M1SqlFixture fixture)
                     var row = await reset.Tenants.SingleAsync(x => x.Id == Alpha.Id, Ct);
                     if (row.Subscription == SubscriptionStatus.PendingDeletion)
                     {
+                        Assert.Equal(OperationStatus.Migrating, row.Operation);
+                        Assert.True(row.OperationId == operation, "Only the owned disposable release fixture can be reset.");
                         row.Subscription = current.Subscription;
                         row.ExpiresAt = current.ExpiresAt;
                         row.RegistryVersion = checked(row.RegistryVersion + 1);
