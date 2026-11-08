@@ -238,3 +238,4 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
         }
     }
     private sealed class M7LoadFailure : Exception { }
+}
