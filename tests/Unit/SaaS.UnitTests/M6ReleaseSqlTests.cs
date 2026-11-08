@@ -82,11 +82,41 @@ public sealed class M6ReleaseSqlTests(M1SqlFixture fixture)
                 var latest = await CurrentAsync(Alpha);
                 await new IdentityOperations(new()).SetTenantAsync(Alpha.Id, state, expiry, token, latest.RegistryVersion);
             });
-            await Assert.ThrowsAsync<TenantContractException>(() => service.ApplyAsync(Alpha.Id, operation, current.RegistryVersion, false, Ct));
-            var after = await CurrentAsync(Alpha);
-            Assert.Equal(state, after.Subscription); Assert.Equal(expiry, after.ExpiresAt);
-            Assert.Equal(OperationStatus.Migrating, after.Operation);
-            Assert.False(TenantPolicy.IsOperational(after.Status(), DateTimeOffset.UtcNow));
+            try
+            {
+                await Assert.ThrowsAsync<TenantContractException>(() => service.ApplyAsync(Alpha.Id, operation, current.RegistryVersion, false, Ct));
+                var after = await CurrentAsync(Alpha);
+                Assert.Equal(state, after.Subscription); Assert.Equal(expiry, after.ExpiresAt);
+                Assert.Equal(OperationStatus.Migrating, after.Operation);
+                Assert.False(TenantPolicy.IsOperational(after.Status(), DateTimeOffset.UtcNow));
+                if (state == SubscriptionStatus.PendingDeletion)
+                {
+                    // Production lifecycle must not resurrect a pending-deletion tenant.
+                    var denied = await Assert.ThrowsAsync<TenantContractException>(() =>
+                        new IdentityOperations(new()).SetTenantAsync(Alpha.Id, SubscriptionStatus.Active,
+                            current.ExpiresAt, Ct, after.RegistryVersion));
+                    Assert.Equal("deletion_recovery_requires_separate_operation", denied.Code);
+                }
+            }
+            finally
+            {
+                if (state == SubscriptionStatus.PendingDeletion)
+                {
+                    // Disposable SQL fixture cleanup only. Its HTTP teardown restores the
+                    // pre-test lifecycle through the production API, which correctly refuses
+                    // PendingDeletion -> Active. Revert only this fixture's lifecycle fields
+                    // using the same privileged test-admin boundary as M4HttpTests.HttpAsync.
+                    await using var reset = TenancyConnections.PlatformContext(Environment.PlatformAdmin);
+                    var row = await reset.Tenants.SingleAsync(x => x.Id == Alpha.Id, Ct);
+                    if (row.Subscription == SubscriptionStatus.PendingDeletion)
+                    {
+                        row.Subscription = current.Subscription;
+                        row.ExpiresAt = current.ExpiresAt;
+                        row.RegistryVersion = checked(row.RegistryVersion + 1);
+                        await reset.SaveChangesAsync(Ct);
+                    }
+                }
+            }
         }
     }
 }
