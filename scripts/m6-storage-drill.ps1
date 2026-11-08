@@ -32,16 +32,31 @@ function Import-ProductionTypes {
 if ($Mode -ne 'Parent') {
     Import-ProductionTypes
     $env:SAAS_OPERATIONS_HOME = $PrivateRoot
+    # Reflection does not perform PowerShell's normal PSObject unwrapping. Keep this
+    # test-only bridge strongly typed; the production writer and gate remain unchanged.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+public static class M6MarkerProbe {
+    public static Task WriteAsync(Type production, string path, string resource, Guid operation, Guid owner) {
+        var markerType = production.GetNestedType("Marker", BindingFlags.NonPublic);
+        var marker = Activator.CreateInstance(markerType, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            null, new object[] { 1, resource, operation, owner, null, null }, null);
+        var method = production.GetMethod("WriteAsync", BindingFlags.NonPublic | BindingFlags.Static);
+        return (Task)method.Invoke(null, new object[] { path, marker, CancellationToken.None });
+    }
+    public static Task DemandAsync(Type production, string resource) {
+        var method = production.GetMethod("DemandQuiescentAsync", BindingFlags.NonPublic | BindingFlags.Static);
+        return (Task)method.Invoke(null, new object[] { resource, CancellationToken.None });
+    }
+}
+'@
     $type = [SaaS.Tenancy.Operations.OperationChildProcess]
     $path = Join-Path $PrivateRoot ($Resource + '.child.json')
     if ($Mode -eq 'WriteMarker') {
-        $markerType = $type.GetNestedType('Marker', [Reflection.BindingFlags]::NonPublic)
-        $marker = [Activator]::CreateInstance($markerType,
-            [Reflection.BindingFlags]'Public,NonPublic,Instance', $null,
-            [object[]]@(1, $Resource, $OperationId, $OwnerId, $null, $null), $null)
-        $writer = $type.GetMethod('WriteAsync', [Reflection.BindingFlags]'NonPublic,Static')
-        $task = $writer.Invoke($null, [object[]]@($path, $marker, [Threading.CancellationToken]::None))
-        $task.GetAwaiter().GetResult()
+        $null = [M6MarkerProbe]::WriteAsync($type, $path, $Resource, $OperationId, $OwnerId).GetAwaiter().GetResult()
         [IO.File]::WriteAllText((Join-Path $PrivateRoot 'writer.ready'), 'production_write_completed')
         while ($true) { Start-Sleep -Seconds 5 }
     } else {
@@ -51,12 +66,9 @@ if ($Mode -ne 'Parent') {
             $marker.OwnerId -ne $OwnerId -or $null -ne $marker.ProcessId -or $null -ne $marker.StartUtcTicks) {
             throw 'durable_intent_corrupted'
         }
-        $demand = $type.GetMethod('DemandQuiescentAsync', [Reflection.BindingFlags]'NonPublic,Static')
         $rejected = $false
-        try {
-            $task = $demand.Invoke($null, [object[]]@($Resource, [Threading.CancellationToken]::None))
-            $task.GetAwaiter().GetResult()
-        } catch {
+        try { $null = [M6MarkerProbe]::DemandAsync($type, $Resource).GetAwaiter().GetResult() }
+        catch {
             if ((Get-DrillError $_) -cne 'operation_child_reconciliation_required') { throw }
             $rejected = $true
         }
@@ -82,7 +94,7 @@ $accounts = [Collections.Generic.List[string]]::new()
 $previous = @{}
 $writerProcess = $null
 $drains = @()
-$key = $null; $replacement = $null; $password = $null
+$key = $null; $replacement = $null; $password = $null; $randomAccountSecret = $null; $secure = $null
 $code = 1
 $report = [ordered]@{ formatVersion = 1; status = 'FAIL'; sourceSha = $null; os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
     powershell = $PSVersionTable.PSVersion.ToString(); startedUtc = [DateTimeOffset]::UtcNow
@@ -140,7 +152,8 @@ try {
     Import-ProductionTypes
     foreach ($path in @($base,$backup,$keys,$operations,$public)) { [IO.Directory]::CreateDirectory($path) | Out-Null }
     if ($IsWindows) {
-        $password = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant() + 'Aa1!'
+        $randomAccountSecret = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant() + 'Aa1!'
+        $password = $randomAccountSecret
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
         $sqlAccount = New-LocalUser -Name $sqlUser -Password $secure -Description 'Disposable M6 SQL principal rehearsal'
         $accounts.Add($sqlUser)
@@ -222,7 +235,7 @@ public static class M6StoragePrincipal {
         $rejected = $false
         try {
             $opened = $store.OpenAsync($tenant, $backupId, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
-            $opened.DisposeAsync().AsTask().GetAwaiter().GetResult()
+            $null = $opened.DisposeAsync().AsTask().GetAwaiter().GetResult()
         } catch {
             if ((Get-DrillError $_) -cne 'backup_manifest_untrusted') { throw }
             $rejected = $true
@@ -239,7 +252,7 @@ public static class M6StoragePrincipal {
     try {
         $opened = $store.OpenAsync($tenant, $backupId, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
         try { $report.steps.retainedKey = @{ status = 'PASS'; backupId = $backupId; manifestSha256 = $opened.ManifestSha256; wrongAndMissingKeysRejected = $true } }
-        finally { $opened.DisposeAsync().AsTask().GetAwaiter().GetResult() }
+        finally { $null = $opened.DisposeAsync().AsTask().GetAwaiter().GetResult() }
     } finally { $store.Dispose() }
     $resourceName = 'tenant-' + [guid]::NewGuid().ToString('N')
     $operation = [guid]::NewGuid(); $owner = [guid]::NewGuid()
@@ -252,13 +265,13 @@ public static class M6StoragePrincipal {
     }
     $report.steps.marker = @{ processId = $writerProcess.Id; startUtc = $writerProcess.StartTime.ToUniversalTime(); killUtc = [DateTimeOffset]::UtcNow }
     $writerProcess.Kill($true); $writerProcess.WaitForExit()
-    foreach ($drain in $drains) { $drain.GetAwaiter().GetResult() }
+    foreach ($drain in $drains) { $null = $drain.GetAwaiter().GetResult() }
     $reader = Start-MarkerChild 'ReadMarker' $resourceName $operation $owner
     try {
         $readerOut = $reader.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
         $readerError = $reader.StandardError.BaseStream.CopyToAsync([IO.Stream]::Null)
         if (-not $reader.WaitForExit(40000)) { $reader.Kill($true); $reader.WaitForExit(); throw 'marker_reader_timeout' }
-        $readerOut.GetAwaiter().GetResult(); $readerError.GetAwaiter().GetResult()
+        $null = $readerOut.GetAwaiter().GetResult(); $null = $readerError.GetAwaiter().GetResult()
         if ($reader.ExitCode -ne 0) { throw 'fresh_process_marker_reopen_failed' }
     } finally { $reader.Dispose() }
     $report.steps.marker.reopened = Get-Content -LiteralPath (Join-Path $operations 'reader.json') -Raw | ConvertFrom-Json
@@ -272,14 +285,15 @@ public static class M6StoragePrincipal {
     try {
         if ($null -ne $writerProcess) {
             if (-not $writerProcess.HasExited) { $writerProcess.Kill($true); $writerProcess.WaitForExit() }
-            foreach ($drain in $drains) { $drain.GetAwaiter().GetResult() }
+            foreach ($drain in $drains) { $null = $drain.GetAwaiter().GetResult() }
             $writerProcess.Dispose()
         }
     } catch { $code = 1; $report.processCleanup = 'FAIL' }
     foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
     if ($null -ne $key) { [Array]::Clear($key, 0, $key.Length) }
     if ($null -ne $replacement) { [Array]::Clear($replacement, 0, $replacement.Length) }
-    $password = $null
+    if ($null -ne $secure) { $secure.Dispose() }
+    $password = $null; $randomAccountSecret = $null
     try {
         foreach ($account in $accounts) {
             if ($IsWindows) { Remove-LocalUser -Name $account }
