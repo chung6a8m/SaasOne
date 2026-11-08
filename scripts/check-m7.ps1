@@ -13,7 +13,7 @@ $run=Join-Path $root "artifacts/m7-runs/$runId"
 $commands=[Collections.Generic.List[object]]::new()
 $report=[ordered]@{schemaVersion=1;mode=$Mode;status='FAIL';sourceSha=$null;sourceClean=$false;startedUtc=[DateTimeOffset]::UtcNow;completedUtc=$null;commands=$commands;acceptance='NOT_ASSESSED';ownerReview='PENDING';exitCode=1}
 $code=1; $lock=$null; $targetValue=$null; $targetPath=$null; $targetHash=$null
-$knownSecrets=@(Get-ChildItem Env: | Where-Object { $_.Name -match '^(SAAS_|MSSQL_)' -and $_.Value.Length -ge 8 } | ForEach-Object Value)
+$knownSecrets=@(Get-ChildItem Env: | Where-Object { $_.Name -match '^(SAAS_|MSSQL_)' -and $_.Name -notmatch '(SOURCE_SHA|EVIDENCE_DIRECTORY)$' -and $_.Value.Length -ge 8 } | ForEach-Object Value)
 function Protect-RunText([string]$Text) {
     foreach ($value in $knownSecrets) { $Text=$Text.Replace($value,'[REDACTED_CONFIG]') }
     Protect-M6Text $Text
@@ -36,7 +36,16 @@ function Copy-M7Text([string]$Source,[string]$Relative) {
     if ((Get-Item -LiteralPath $Source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'm7_evidence_link_forbidden' }
     $destination=Join-Path $run $Relative
     [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
-    [IO.File]::WriteAllText($destination,(Protect-RunText ([IO.File]::ReadAllText($Source))),[Text.UTF8Encoding]::new($false))
+    if ([IO.Path]::GetExtension($Source) -eq '.trx') {
+        $trx=Read-M6Trx $Source
+        foreach ($node in $trx.xml.SelectNodes('//*[local-name()="Message" or local-name()="StackTrace" or local-name()="StdOut" or local-name()="StdErr"]')) {
+            $node.InnerText=Protect-RunText $node.InnerText
+        }
+        # Preserve testcase names, outcomes and counters verbatim, including long names.
+        $trx.xml.Save($destination)
+    } else {
+        [IO.File]::WriteAllText($destination,(Protect-RunText ([IO.File]::ReadAllText($Source))),[Text.UTF8Encoding]::new($false))
+    }
 }
 function Require-TrackedPath([string]$Relative) {
     $full=Resolve-M6Artifact $root $Relative
@@ -72,13 +81,18 @@ try {
         if ((Get-FileHash tests/Load/m7-baseline.json -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetValue.loadConfigSha256) { throw 'm7_load_configuration_changed' }
         $report.targets=[ordered]@{path=$Targets;sha256=$targetHash;committedUtc=$lockedAt;baselineSha=$baseline.sourceSha;decisionReference=$targetValue.decisionReference}
         Copy-M7Text $targetPath 'targets.json'
+        $beforeFull=@(Get-ChildItem artifacts/local-verify -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
         # Full inherited M0-M6 evidence is mandatory at this exact source, not a prior green SHA.
         Invoke-M7Gate 'inherited-full' @('scripts/local-verify.ps1','-Scope','Full')
-        $inherited=@(Get-ChildItem artifacts/local-verify -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'report.json') } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1)
-        if ($inherited.Count -ne 1) { throw 'm7_inherited_evidence_missing' }
-        $prior=Get-Content (Join-Path $inherited[0].FullName 'report.json') -Raw | ConvertFrom-Json
-        if ($prior.sourceSha -cne $report.sourceSha -or $prior.status -cne 'PASS') { throw 'm7_inherited_evidence_mismatch' }
-        Copy-M7Text (Join-Path $inherited[0].FullName 'report.json') 'inherited-full.json'
+        $inherited=@(Get-ChildItem artifacts/local-verify -Directory | Where-Object { $_.Name -notin $beforeFull })
+        if ($inherited.Count -ne 1) { throw 'm7_inherited_evidence_missing_or_ambiguous' }
+        $summary=Join-Path $inherited[0].FullName 'summary.json'
+        $prior=Get-Content -LiteralPath $summary -Raw | ConvertFrom-Json
+        if ($prior.sourceSha -cne $report.sourceSha -or $prior.status -cne 'PASS' -or $prior.exitCode -ne 0) { throw 'm7_inherited_evidence_mismatch' }
+        Copy-M7Text $summary 'inherited-full.json'
+        $inheritedZip=$inherited[0].FullName+'.zip'
+        if (-not (Test-Path -LiteralPath $inheritedZip)) { throw 'm7_inherited_package_missing' }
+        [IO.File]::Copy($inheritedZip,(Join-Path $run 'inherited-full.zip'))
     } elseif (-not [string]::IsNullOrWhiteSpace($Targets)) { throw 'm7_targets_only_apply_to_acceptance_mode' }
     Invoke-M7Gate 'syntax' @('scripts/check-powershell-syntax.ps1')
     Invoke-M7Gate 'evidence-policy' @('scripts/test-m7-evidence.ps1')

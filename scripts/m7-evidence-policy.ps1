@@ -18,7 +18,7 @@ function Assert-M7LoadReport($Report, [string]$SourceSha) {
     if ($Report.configuredVirtualUsers -ne 100 -or $Report.peakVirtualUsers -ne 100 -or $Report.peakConcurrentRequests -lt 1 -or $Report.peakConcurrentRequests -gt 100) { throw 'm7_invalid_population' }
     if (@($Report.missingCells).Count -ne 0 -or @($Report.unexpectedFailures).Count -ne 0 -or @($Report.integrityErrors).Count -ne 0) { throw 'm7_load_correctness_failed' }
     Assert-M7Finite $Report.elapsedIncludingDrainSeconds ($Report.config.rampSeconds + $Report.config.measureSeconds)
-    $expected = @(Get-M7Cells)
+    [string[]]$expected = @(Get-M7Cells)
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($row in @($Report.rows)) {
         $cell = "$($row.tenant)/$($row.operation)"
@@ -46,7 +46,7 @@ function Assert-M7Targets($Targets) {
         $Targets.baseline.reportSha256 -cnotmatch '^[0-9a-f]{64}$' -or [string]::IsNullOrWhiteSpace($Targets.baseline.reportPath) -or
         [string]::IsNullOrWhiteSpace($Targets.baseline.artifactReference) -or [string]::IsNullOrWhiteSpace($Targets.reviewedBy) -or
         [string]::IsNullOrWhiteSpace($Targets.decisionReference) -or $Targets.maxUnexpectedErrors -ne 0) { throw 'm7_invalid_targets' }
-    $expected = @(Get-M7Cells)
+    [string[]]$expected = @(Get-M7Cells)
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($row in @($Targets.limits)) {
         $cell = "$($row.tenant)/$($row.operation)"

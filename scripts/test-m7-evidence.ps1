@@ -26,12 +26,16 @@ function New-Targets {
 $script:count=0
 function Must-Reject([string]$Name, [scriptblock]$Action) {
     $rejected=$false
-    try { & $Action } catch { $rejected=$true }
+    try { & $Action } catch {
+        if ($_.Exception.Message -notlike 'm7_*') { throw }
+        $rejected=$true
+    }
     if (-not $rejected) { throw "Evidence policy did not reject: $Name" }
     $script:count++
 }
 Assert-M7LoadReport (New-Report) $sha
 Assert-M7Thresholds (New-Report) (New-Targets)
+Assert-M7TargetTiming ([DateTimeOffset]'2026-01-01T00:00:00Z') ([DateTimeOffset]'2026-01-02T00:00:00Z') ([DateTimeOffset]'2026-01-03T00:00:00Z')
 Must-Reject 'empty rows' { $r=New-Report; $r.rows=@(); Assert-M7LoadReport $r $sha }
 Must-Reject 'missing tenant' { $r=New-Report; $r.rows=@($r.rows | Where-Object tenant -ne delta); Assert-M7LoadReport $r $sha }
 Must-Reject 'missing approve' { $r=New-Report; $r.rows=@($r.rows | Where-Object operation -ne approve); Assert-M7LoadReport $r $sha }
@@ -49,8 +53,8 @@ foreach ($bad in @([double]::NaN,[double]::PositiveInfinity,-1.0)) {
 Must-Reject 'inverted quantiles' { $r=New-Report; $r.rows[0].latency.p99Ms=1.0; Assert-M7LoadReport $r $sha }
 Must-Reject 'missing target cell' { $t=New-Targets; $t.limits=@($t.limits | Where-Object operation -ne approve); Assert-M7Targets $t }
 Must-Reject 'unreviewed targets' { $t=New-Targets; $t.reviewedBy=''; Assert-M7Targets $t }
-Must-Reject 'post-hoc lock' { Assert-M7TargetTiming ([DateTimeOffset]'2026-01-01Z') ([DateTimeOffset]'2026-01-03Z') ([DateTimeOffset]'2026-01-02Z') }
-Must-Reject 'no preceding baseline' { Assert-M7TargetTiming ([DateTimeOffset]'2026-01-02Z') ([DateTimeOffset]'2026-01-01Z') ([DateTimeOffset]'2026-01-03Z') }
+Must-Reject 'post-hoc lock' { Assert-M7TargetTiming ([DateTimeOffset]'2026-01-01T00:00:00Z') ([DateTimeOffset]'2026-01-03T00:00:00Z') ([DateTimeOffset]'2026-01-02T00:00:00Z') }
+Must-Reject 'no preceding baseline' { Assert-M7TargetTiming ([DateTimeOffset]'2026-01-02T00:00:00Z') ([DateTimeOffset]'2026-01-01T00:00:00Z') ([DateTimeOffset]'2026-01-03T00:00:00Z') }
 Must-Reject 'latency threshold exceeded' { $t=New-Targets; $t.limits[0].p95Ms=15.0; Assert-M7Thresholds (New-Report) $t }
 Must-Reject 'throughput threshold missed' { $t=New-Targets; $t.limits[0].minSuccessfulRequestsPerSecond=1.0; Assert-M7Thresholds (New-Report) $t }
-Write-Host "PASS: M7 evidence policy ($script:count negative cases; positive report and threshold cases). Synthetic policy inputs are not load evidence."
+Write-Host "PASS: M7 evidence policy ($script:count negative cases; positive report, threshold and timing cases). Synthetic policy inputs are not load evidence."
