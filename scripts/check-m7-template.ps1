@@ -3,13 +3,13 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
-$home=Join-Path $root 'artifacts/m7/template-cli'
+$templateHome=Join-Path $root 'artifacts/m7/template-cli'
 $out=Join-Path $root 'artifacts/m7/template-smoke'
 $oldHome=$env:DOTNET_CLI_HOME
 Push-Location $root
 try {
-    foreach ($path in @($home,$out)) { if (Test-Path $path) { Remove-Item $path -Recurse -Force } }
-    $env:DOTNET_CLI_HOME=$home
+    foreach ($path in @($templateHome,$out)) { if (Test-Path $path) { Remove-Item $path -Recurse -Force } }
+    $env:DOTNET_CLI_HOME=$templateHome
     & dotnet new install (Join-Path $root 'templates/module')
     if ($LASTEXITCODE -ne 0) { throw 'Module template install failed.' }
     & dotnet new saas-module --name SaaS.SmokeModule --output $out
@@ -27,6 +27,6 @@ try {
     Write-Host 'PASS: module template generated, substituted, restored and built with Abstractions only.'
 } finally {
     $env:DOTNET_CLI_HOME=$oldHome
-    if (Test-Path $home) { Remove-Item $home -Recurse -Force }
+    if (Test-Path $templateHome) { Remove-Item $templateHome -Recurse -Force }
     Pop-Location
 }
