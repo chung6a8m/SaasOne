@@ -1,0 +1,40 @@
+name: M7 composition and component contracts
+on:
+  push:
+    branches: [main, codex/m7-acceptance]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m7-components-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  components:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Build and exercise component contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/check-powershell-syntax.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore SaasOne.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build SaasOne.slnx -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test SaasOne.slnx -c Release --no-build --filter 'Category!=SqlM1&Category!=SqlM2&Category!=SqlM3&Category!=SqlM4&Category!=SqlM5&Category!=SqlM6&Category!=SqlM7' --logger trx --results-directory artifacts/test-results/m7-components
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m7-components-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/test-results/m7-components/*.trx
+          if-no-files-found: error
+          retention-days: 7
