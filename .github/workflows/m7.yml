@@ -11,7 +11,23 @@ concurrency:
   group: m7-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  policy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Evidence and target policy regressions
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/test-m7-evidence.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File scripts/test-m7-target-readiness.ps1
+          exit $LASTEXITCODE
   baseline:
+    needs: policy
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
