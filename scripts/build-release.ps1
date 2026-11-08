@@ -31,7 +31,9 @@ try {
     $catalog = @(Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json -Depth 20)
     if ($catalog.Count -ne 6) { throw 'release_context_inventory_mismatch' }
     foreach ($entry in $catalog) {
-        $common = @('--project',$entry.project,'--startup-project','src/SaaS.Web','--context',$entry.stream.context,'--configuration','Release','--no-build')
+        # The owning migrations project contains the Design package and a no-network design-time factory.
+        # SaaS.Web is the deployable host, not an EF tooling startup project: its Design assets are private in the owners.
+        $common = @('--project',$entry.project,'--startup-project',$entry.project,'--context',$entry.stream.context,'--configuration','Release','--no-build')
         Invoke-M6Checked dotnet (@('ef','migrations','has-pending-model-changes') + $common)
         Invoke-M6Checked dotnet (@('ef','migrations','bundle') + $common + @('--target-runtime',$RuntimeIdentifier,'--output',(Join-Path $outputFull $entry.stream.bundle)))
         Invoke-M6Checked dotnet (@('ef','migrations','script','--idempotent') + $common + @('--output',(Join-Path $outputFull $entry.stream.sql)))
