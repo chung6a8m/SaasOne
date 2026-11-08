@@ -22,7 +22,12 @@ function Invoke-M6Checked {
 }
 function Protect-M6Text {
     param([AllowEmptyString()][string]$Text)
-    $result = [regex]::Replace($Text, '(?i)(Password|Pwd|ClientSecret|client_secret|refresh_token|access_token|id_token|authorization|SAAS_BACKUP_MANIFEST_KEY)\s*[=:]\s*(?:"[^"]*"|''[^'']*''|[^;\s<]+)', '$1=[REDACTED]')
+    # Actions interprets mask commands in its console, not inside uploaded files.
+    # Child-created secrets are absent from the parent's environment snapshot.
+    # Drop the entire payload (including percent-encoded CR/LF) before persistence,
+    # while preserving real line endings and the surrounding evidence structure.
+    $result = [regex]::Replace($Text, '(?i)::add-mask::[^\r\n]*', '::add-mask::[REDACTED]')
+    $result = [regex]::Replace($result, '(?i)(Password|Pwd|ClientSecret|client_secret|refresh_token|access_token|id_token|authorization|SAAS_BACKUP_MANIFEST_KEY)\s*[=:]\s*(?:"[^"]*"|''[^'']*''|[^;\s<]+)', '$1=[REDACTED]')
     $result = [regex]::Replace($result, 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[REDACTED_JWT]')
     return [regex]::Replace($result, '(?<![A-Za-z0-9_])[A-Za-z0-9_+/=-]{80,}(?![A-Za-z0-9_])', '[REDACTED_LONG_VALUE]')
 }

@@ -33,6 +33,7 @@ dotnet restore SaasOne.slnx --locked-mode
 dotnet build src/SaaS.Web/SaaS.Web.csproj --configuration Release --no-restore
 pwsh -NoProfile -File scripts/check-powershell-syntax.ps1
 pwsh -NoProfile -File scripts/m6-storage-drill.ps1 -DisposableHostAcknowledged
+pwsh -NoProfile -File scripts/test-m6-evidence.ps1
 ```
 
 Check each command's exit code; stop on failure. Never run the drill against deployment paths. It creates uniquely named local fixture principals and temporary directories, then removes only those owned resources. A cleanup failure fails the drill.
@@ -45,8 +46,16 @@ The marker case invokes the actual production writer, kills its owned OS process
 
 Review `m6-storage-drill.json` and `.sha256` from **both OS jobs**, including source SHA, OS/tool versions, principal controls, key-retention result, process/start/kill data, fresh-reader marker hash and cleanup result. `test-m6-marker-writer.ps1` is a separate secret-free diagnostic regression; its success cannot replace the complete storage report.
 
+## Evidence-export safety gate
+
+Actions console masking is not artifact sanitization. A child verification process can emit a workflow mask command containing a dynamically generated secret that does not exist in the parent's environment snapshot. The complete command payload must be removed before log persistence, including percent-encoded newline/carriage-return forms. Preserve real line endings, testcase names/outcomes/counters, source SHA and artifact hashes; do not weaken inventories or secret checks to obtain a green run.
+
+The 2026-11-08 review found this defect in full run `42460717975`, artifact `13609973963`: runtime tests passed, but the packaged log retained disposable credential payloads. Treat that full ZIP as **not approved for sharing or acceptance retention**. No credential values belong in issue comments, screenshots, commits or failure messages. The downloaded source checksums and the failure record remain in `docs/verification/m6-implementation-status.md`; do not hide the defect by modifying the original artifact. A manually sanitized copy must have a new checksum and explicit derivative provenance, never the original artifact's identity. Restrict/remove unsafe retained copies under the operator's artifact policy and verify fixture cleanup; investigate and rotate any still-valid deployment credential if exposure is found.
+
+The Windows/Linux workflow and full verification execute `scripts/test-m6-evidence.ps1`. Require all 17 self-test cases to pass, including EOF/LF/CRLF/prefix/encoded-mask handling, identifier preservation and a real ZIP round trip. Then download and inspect the **new full artifact's actual log bytes**: every workflow mask command must have only the redacted placeholder, not its original payload. A green self-test does not retrospectively sanitize an older artifact. Infrastructure failures before test execution remain BLOCKED/FAIL; do not count them as an expected RED test or bypass the pinned toolchain.
+
 ## Sign-off record and M7 handoff
 
-Record the exact reviewed PR head and tested merge-tree SHA, workflow/run attempt and artifact IDs/checksums, commands, 20-fact inventory, G1 process report, both storage reports and any sanitized failure history in Issue #10. Reviewers must explicitly distinguish fixture evidence from deployment approval. A pending, failed, cancelled, expired/missing or unreviewed artifact is not PASS. Retain reviewed artifacts outside the short-lived CI store before expiration.
+Record the exact reviewed PR head and tested merge-tree SHA, workflow/run attempt and artifact IDs/checksums, commands, 20-fact inventory, G1 process report, both storage reports, redaction self-tests and any sanitized failure history in Issue #10. Reviewers must explicitly distinguish fixture evidence from deployment approval. A pending, failed, cancelled, expired/missing or unreviewed artifact is not PASS. Retain reviewed sanitized artifacts outside the short-lived CI store before expiration.
 
-The authoring container has no runtime tools, so its source edits cannot supply local runtime evidence. The release baseline and tests must be checked in CI; reviewer decision remains separate from automated gate status. Update the issue checklist only from reviewed artifacts. Merge/close M6 and begin M7 acceptance only after that record covers G1–G5 with no unresolved failure. Do not mark production-ready merely because the code has merged.
+The authoring container has no runtime tools, so its source edits cannot supply local runtime evidence. The release baseline and tests must be checked in CI; reviewer decision remains separate from automated gate status. Update the issue checklist only from reviewed artifacts. Merge/close M6 and begin M7 acceptance only after that record covers G1–G5 and evidence-export safety with no unresolved failure. Do not mark production-ready merely because the code has merged.
