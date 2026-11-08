@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "virtualUsersPerTenant": 25,
   "rampSeconds": 30,
-  "measureSeconds": 60,
-  "thinkMilliseconds": 250
+  "measureSeconds": 120,
+  "thinkMilliseconds": 250,
+  "requestTimeoutSeconds": 120
 }

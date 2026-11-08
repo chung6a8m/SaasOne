@@ -2,13 +2,13 @@ using System.Text.Json;
 using Xunit;
 namespace SaaS.UnitTests;
 
-internal sealed record M7LoadConfig(int SchemaVersion, int VirtualUsersPerTenant, int RampSeconds, int MeasureSeconds, int ThinkMilliseconds)
+internal sealed record M7LoadConfig(int SchemaVersion, int VirtualUsersPerTenant, int RampSeconds, int MeasureSeconds, int ThinkMilliseconds, int RequestTimeoutSeconds)
 {
     internal void Validate()
     {
         if (SchemaVersion != 1 || VirtualUsersPerTenant != 25 || RampSeconds is < 5 or > 60 || MeasureSeconds is < 30 or > 120
-            || RampSeconds + MeasureSeconds > 180 || ThinkMilliseconds is < 0 or > 5000)
-            throw new InvalidDataException("M7 requires four tenants, 25 virtual users each and a bounded ramp/measurement window.");
+            || RampSeconds + MeasureSeconds > 180 || ThinkMilliseconds is < 0 or > 5000 || RequestTimeoutSeconds is < 30 or > 120)
+            throw new InvalidDataException("M7 requires four tenants, 25 virtual users each and bounded measurement and request deadlines.");
     }
     internal static M7LoadConfig Load()
     {
@@ -49,9 +49,17 @@ public sealed class M7MetricTests
     [Fact]
     public void Load_configuration_cannot_silently_reduce_population_or_measurement()
     {
-        new M7LoadConfig(1, 25, 30, 60, 250).Validate();
-        Assert.Throws<InvalidDataException>(() => new M7LoadConfig(1, 24, 30, 60, 250).Validate());
-        Assert.Throws<InvalidDataException>(() => new M7LoadConfig(1, 25, 0, 60, 250).Validate());
-        Assert.Throws<InvalidDataException>(() => new M7LoadConfig(1, 25, 30, 0, 250).Validate());
+        new M7LoadConfig(1, 25, 30, 120, 250, 120).Validate();
+        Assert.Throws<InvalidDataException>(() => new M7LoadConfig(1, 24, 30, 60, 250, 120).Validate());
+        Assert.Throws<InvalidDataException>(() => new M7LoadConfig(1, 25, 0, 60, 250, 120).Validate());
+        Assert.Throws<InvalidDataException>(() => new M7LoadConfig(1, 25, 30, 0, 250, 120).Validate());
+    }
+    [Fact]
+    public void Observation_deadline_is_explicit_bounded_and_not_a_latency_target()
+    {
+        foreach (var invalid in new[] { 0, 29, 121, int.MaxValue })
+            Assert.Throws<InvalidDataException>(() => new M7LoadConfig(1, 25, 30, 120, 250, invalid).Validate());
+        new M7LoadConfig(1, 25, 30, 60, 250, 30).Validate();
+        new M7LoadConfig(1, 25, 30, 120, 250, 120).Validate();
     }
 }

@@ -7,7 +7,7 @@ namespace SaaS.UnitTests;
 
 internal static class M7Http
 {
-    internal static async Task<HttpResponseMessage> SendAsync(M7SqlFixture fixture, string token, string slug, string suffix = "", object? body = null, string? key = null, CancellationToken ct = default)
+    internal static async Task<HttpResponseMessage> SendAsync(M7SqlFixture fixture, string token, string slug, string suffix = "", object? body = null, string? key = null, CancellationToken ct = default, HttpClient? client = null)
     {
         using var request = new HttpRequestMessage(body is null ? HttpMethod.Get : HttpMethod.Post, "/" + slug + "/api/v1/orders" + suffix);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -16,7 +16,7 @@ internal static class M7Http
             request.Content = JsonContent.Create(body);
             request.Headers.Add("Idempotency-Key", key ?? Guid.NewGuid().ToString("N"));
         }
-        return await fixture.Api.SendAsync(request, ct);
+        return await (client ?? fixture.Api).SendAsync(request, ct);
     }
     internal static OrderDraft Draft(string prefix = "M7") => new(prefix + "-" + Guid.NewGuid().ToString("N")[..20], "Disposable fixture customer", 42m, "USD", "M7 fixture only");
     internal static object Revision(OrderView order) => new { expectedRevision = order.Revision, expectedVersion = order.Version };

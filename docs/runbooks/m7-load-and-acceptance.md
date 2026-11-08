@@ -2,9 +2,9 @@
 
 ## Run an implementation baseline
 
-Use a clean checkout, the exact SDK in `global.json`, PowerShell 7.6.9, Linux/Windows x64 and Docker.
-The runner creates a fresh pinned SQL Server container; it does not accept an external SQL target.
-Never run multiple verification processes against the same working directory.
+Use a clean checkout, the exact SDK in `global.json`, PowerShell 7.6.9, x64 and Docker configured
+for Linux containers. The runner creates a fresh pinned SQL Server container; it does not accept
+an external SQL target. Never run multiple verification processes in the same working directory.
 
 ```powershell
 pwsh -NoProfile -File scripts/check-m7.ps1 -Mode Baseline
@@ -22,18 +22,24 @@ Beta/Gamma use Approval. All four are Active during load. Lifecycle tests restor
 are run outside the measured all-Active window. Expected denial/fault responses belong to correctness
 tests, not successful load transactions.
 
-There are 25 virtual users per tenant (100 total), a 30-second ramp and a 60-second measurement
-window in the initial proposal. Five creator accounts per tenant supply 100 separate grants;
-two reviewer accounts, shared across the two approval tenants, supply four reviewer grants.
-Thus 100 virtual sessions are **not 100 distinct enrolled people**. Extra actors prove shared-user
-role differences, explicit Gamma Deny, Alpha-only membership and absent membership. The private
-operator uses the existing guarded operations path; its credentials are never given to the HTTP app.
+There are 25 virtual users per tenant (100 total), a 30-second ramp, a 120-second measurement window
+and a 120-second load-client observation deadline. The earlier 60-second measurement / 30-second
+client-deadline experiment failed and remains failed; see `docs/verification/m7-observation-2.md`
+for its exact evidence, the reason for a longer observation and the interpretation limits.
+**The client deadline is not an accepted latency target.** Identity setup and correctness clients
+retain their original 30-second deadline. No production timeout or guard is changed.
+
+Five creator accounts per tenant supply 100 separate grants; two reviewer accounts, shared across
+the two approval tenants, supply four reviewer grants. Thus 100 virtual sessions are **not 100
+separate enrolled people**. Extra actors prove shared-user role differences, explicit Gamma Deny,
+Alpha-only membership and absent membership. The private operator uses the existing guarded
+operations path; its privileged credentials are never given to the independent Portal process.
 
 Each load transaction creates, edits and submits an order, approves on Approval tenants, then reads
 detail and a permission-filtered list. The driver validates identities, canonical order numbers,
 revisions, final state and persisted audit/approval counts. It does not treat a bare HTTP 200 as
 successful business work. All phases' transport failures, unexpected statuses and payload failures
-fail the technical gate; drain failures are not hidden. HTTP client timeout is 30 seconds.
+fail the technical gate; drain failures are not hidden. There are no automatic retries.
 
 ## Interpret the evidence
 
@@ -49,13 +55,15 @@ p50/p95/p99/max, successful completions/second and error counts. Latencies inclu
 **started** inside the measurement window, including their drain time. Throughput counts successful
 requests **completed** inside that window divided by its seconds. These are intentionally different
 cohorts. `load-samples.json` preserves sanitized per-request timings/statuses for independent review.
-Do not average percentiles across tenants or treat ramp/drain time as measurement duration.
+Do not average percentiles across tenants or treat ramp/drain time as measurement duration. Small
+sample counts do not support a high-confidence population p99 claim.
 
 The topology is explicitly limited: load generator and application share one process/host; SQL is
 a separate local Docker container. Reports record CPU/core count, memory, GC, runtime/OS, runner
 image, SQL image digest and version. They are not distributed-client, internet-latency or production
-capacity measurements. SQL-container CPU/wait profiling is a separate diagnostic exercise, not an
-inferred fact from application CPU alone.
+capacity measurements. CPU/GC deltas end before post-load integrity queries; peak working set is
+a process-lifetime high-water mark. SQL-container CPU/wait profiling is separate, not inferred
+from application CPU alone.
 
 ## Lock targets before acceptance
 

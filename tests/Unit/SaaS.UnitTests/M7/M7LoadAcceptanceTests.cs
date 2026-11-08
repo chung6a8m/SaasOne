@@ -17,27 +17,37 @@ public sealed partial class M7SqlAcceptanceTests
     {
         await fixture.DemandMatrixAsync(Ct);
         var config = M7LoadConfig.Load();
-        var driver = new M7LoadDriver(fixture, config);
+        using var driver = new M7LoadDriver(fixture, config);
         await driver.RunAsync(Ct);
         await fixture.DemandMatrixAsync(Ct);
     }
 }
 
-internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
+internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : IDisposable
 {
     private readonly ConcurrentQueue<M7Sample> _samples = new();
     private readonly ConcurrentQueue<(string Tenant, double CompletedSeconds)> _transactions = new();
     private readonly ConcurrentQueue<string> _failures = new();
     private readonly Stopwatch _watch = new();
+    private readonly HttpClient _api = CreateLoadClient(fixture, config);
     private int _activeUsers, _peakUsers, _activeRequests, _peakRequests;
     private readonly string _prefix = ("M7LOAD-" + Guid.NewGuid().ToString("N")[..10] + "-").ToUpperInvariant();
     private static readonly string[] Slugs = ["alpha", "beta", "gamma", "delta"];
     private double End => config.RampSeconds + config.MeasureSeconds;
 
+    private static HttpClient CreateLoadClient(M7SqlFixture fixture, M7LoadConfig config)
+    {
+        config.Validate();
+        var client = fixture.NewClient();
+        // An observation deadline, not an accepted service latency target. Native identity
+        // setup and all correctness tests retain their original 30-second client deadline.
+        client.Timeout = TimeSpan.FromSeconds(config.RequestTimeoutSeconds);
+        return client;
+    }
+    public void Dispose() => _api.Dispose();
+
     internal async Task RunAsync(CancellationToken ct)
     {
-        // Credential acquisition is setup, not measured business throughput. Each VU gets
-        // a genuine authorization-code grant. Accounts are an explicitly reported pool.
         var tokens = new ConcurrentDictionary<string, string[]>();
         var reviewers = new ConcurrentDictionary<string, string[]>();
         await Task.WhenAll(Slugs.Select(async slug =>
@@ -62,6 +72,11 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { _failures.Enqueue("run-cancelled"); }
         finally { _watch.Stop(); }
+        process.Refresh();
+        var cpuSeconds = (process.TotalProcessorTime - cpuStart).TotalSeconds;
+        var gcCollections = Enumerable.Range(0, 3).Select(i => GC.CollectionCount(i) - gcStart[i]).ToArray();
+        var peakWorkingSet = process.PeakWorkingSet64;
+        // Capture process resources before post-load integrity queries, matching the timer.
         var integrity = await VerifyPersistedAsync(CancellationToken.None);
         var samples = _samples.ToArray();
         var rows = new List<object>();
@@ -81,7 +96,6 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
                 latency = measured.Length == 0 ? null : M7Distribution.From(measured.Select(x => x.LatencyMs))
             });
         }
-        process.Refresh();
         var elapsed = _watch.Elapsed.TotalSeconds;
         var valid = missing.Count == 0 && samples.Length > 0 && samples.All(x => x.Success) && _failures.IsEmpty && integrity.Count == 0 && _peakUsers == 100;
         M7Evidence.Write("load-samples.json", new { schemaVersion = 1, sourceSha = M7Evidence.SourceSha, samples = samples.OrderBy(x => x.StartedSeconds) });
@@ -93,6 +107,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
             startedUtc = started, completedUtc = DateTimeOffset.UtcNow, elapsedIncludingDrainSeconds = elapsed,
             transport = "Kestrel HTTPS; native Orchard/OpenIddict; real SQL Server",
             topology = "Load generator and application share one process; SQL Server is a separate local container. Not a production capacity claim.",
+            observationDeadline = "A bounded client measurement deadline, not a latency SLO. Earlier failed 30-second experiments remain failures; targets require separate owner review.",
             latencyCohort = "Requests started in the measured window, including their drain time; nearest-rank percentiles.",
             throughputCohort = "Successful requests completed inside the measured window, divided by window seconds.",
             accounts = new { creatorAccounts = 20, reviewerAccounts = 2, creatorGrants = 100, reviewerGrants = 4 },
@@ -106,10 +121,10 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
             {
                 os = RuntimeInformation.OSDescription, architecture = RuntimeInformation.ProcessArchitecture.ToString(),
                 runtime = RuntimeInformation.FrameworkDescription, logicalProcessors = System.Environment.ProcessorCount,
-                gcAvailableMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, peakWorkingSetBytes = process.PeakWorkingSet64,
-                processCpuSeconds = (process.TotalProcessorTime - cpuStart).TotalSeconds,
-                processCpuPercentOfAvailableCores = elapsed > 0 ? (process.TotalProcessorTime - cpuStart).TotalSeconds / elapsed / System.Environment.ProcessorCount * 100 : 0,
-                gcCollections = Enumerable.Range(0, 3).Select(i => GC.CollectionCount(i) - gcStart[i])
+                gcAvailableMemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, peakWorkingSetBytes = peakWorkingSet,
+                processCpuSeconds = cpuSeconds,
+                processCpuPercentOfAvailableCores = elapsed > 0 ? cpuSeconds / elapsed / System.Environment.ProcessorCount * 100 : 0,
+                gcCollections
             },
             missingCells = missing, unexpectedFailures = _failures.ToArray(), integrityErrors = integrity, rows
         });
@@ -164,7 +179,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
         Max(ref _peakRequests, Interlocked.Increment(ref _activeRequests));
         try
         {
-            using var response = await M7Http.SendAsync(fixture, token, slug, suffix, body, ct: ct);
+            using var response = await M7Http.SendAsync(fixture, token, slug, suffix, body, ct: ct, client: _api);
             status = (int)response.StatusCode;
             if (status != expected) { failure = "unexpected-status"; throw new M7LoadFailure(); }
             var value = await response.Content.ReadFromJsonAsync<T>(ct);
