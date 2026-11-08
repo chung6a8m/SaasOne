@@ -60,7 +60,7 @@ function Assert-M6BundleWorktreeChanges {
             throw 'bundle_worktree_unexpected_change'
         }
         $relative = $line.Substring(3)
-        if ($relative -cnotmatch '^src/(Modules|Platform)/SaaS\\.[A-Za-z]+/packages\\.lock\\.json$') {
+        if ($relative -cnotmatch '^src/(Modules|Platform)/SaaS\.[A-Za-z]+/packages\.lock\.json$') {
             throw 'bundle_worktree_unexpected_change'
         }
         $original = (& git -C $Worktree show "HEAD:$relative" | Out-String)
