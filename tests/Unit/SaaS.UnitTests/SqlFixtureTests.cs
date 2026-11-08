@@ -226,7 +226,9 @@ public sealed class SqlFixtureTests
               port) echo 127.0.0.1:31433 ;;
               image)
                 if [ "$FAKE_DOCKER_MODE" = "pull-fail" ]; then exit 12; fi
-                if { [ "$FAKE_DOCKER_MODE" = "uncached-pull" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; } && [ ! -f "$FAKE_DOCKER_PULL_MARKER" ]; then exit 12; fi
+                if [ "$FAKE_DOCKER_MODE" = "uncached-pull" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; then
+                  if [ ! -f "$FAKE_DOCKER_PULL_MARKER" ]; then exit 12; fi
+                fi
                 if [ "$FAKE_DOCKER_MODE" = "untrusted-cache" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; then
                   echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 else
@@ -263,11 +265,13 @@ public sealed class SqlFixtureTests
                 )
                 if "%FAKE_DOCKER_MODE%"=="untrusted-cache" (
                     echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-                ) else if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" (
-                    echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-                ) else (
-                    echo mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
+                    exit /b 0
                 )
+                if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" (
+                    echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    exit /b 0
+                )
+                echo mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
                 exit /b 0
             )
             if "%~1"=="rm" (
