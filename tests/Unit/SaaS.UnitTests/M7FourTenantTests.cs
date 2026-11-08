@@ -61,14 +61,12 @@ public sealed partial class M7FourTenantTests(M1SqlFixture fixture) : IClassFixt
             Assert.Equal(HttpStatusCode.Forbidden, gammaCreate.StatusCode);
         using (var betaCreate = await SendAsync(http, http.CapturedTokens["beta"].AccessToken, "/beta/api/v1/orders", "shared-create", Draft("SHARED")))
             Assert.Equal(HttpStatusCode.Created, betaCreate.StatusCode);
-        // Alpha-only and no-membership accounts use real native issuer cookies.
         var alphaOnly = await setup.EnrollAsync("alpha");
         using (var alpha = await HttpBrowser.ProbeAsync(http, "alpha", alphaOnly.Tokens.AccessToken)) Assert.Equal(HttpStatusCode.OK, alpha.StatusCode);
         using (var absent = await alphaOnly.Browser.FollowAsync("/beta/account/login")) Assert.True((int)absent.StatusCode is 400 or 401 or 403);
         var noMembership = await setup.EnrollAsync("alpha");
         await http.Operations.SetMembershipAsync(noMembership.Id, http.Tenant("alpha").Id, false, Ct);
         using (var absent = await noMembership.Browser.FollowAsync("/alpha/account/login")) Assert.True((int)absent.StatusCode is 400 or 401 or 403);
-        // The real platform operation SQL principal is not a customer business principal.
         var operationConnection = new SqlConnectionStringBuilder(new TenancyConnections().Platform("operator"))
         { InitialCatalog = TenancyConnections.TenantDatabase(http.Tenant("alpha").Id) }.ConnectionString;
         await Assert.ThrowsAsync<SqlException>(async () =>
@@ -125,7 +123,7 @@ public sealed partial class M7FourTenantTests(M1SqlFixture fixture) : IClassFixt
                 try
                 {
                     var results = await Task.WhenAll(repeated.Select(x => M4HttpTests.ResultAsync(x, HttpStatusCode.OK)));
-                    Assert.Single(results.Where(x => x.Replayed));
+                    Assert.Single(results, x => x.Replayed);
                     Assert.Equal(results[0].Order.Id, results[1].Order.Id);
                     Assert.Equal(results[0].Order.Revision, results[1].Order.Revision);
                 }

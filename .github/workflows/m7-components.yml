@@ -30,6 +30,8 @@ jobs:
           dotnet build SaasOne.slnx -c Release --no-restore
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet test SaasOne.slnx -c Release --no-build --filter 'Category!=SqlM1&Category!=SqlM2&Category!=SqlM3&Category!=SqlM4&Category!=SqlM5&Category!=SqlM6&Category!=SqlM7' --logger trx --results-directory artifacts/test-results/m7-components
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File scripts/test-m7-fixture-boundaries.ps1
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()

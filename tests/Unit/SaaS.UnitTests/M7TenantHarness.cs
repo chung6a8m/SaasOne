@@ -7,6 +7,7 @@ using SaaS.AccessControl;
 using SaaS.Identity;
 using SaaS.Orders;
 using SaaS.Tenancy.Data;
+using SaaS.Tenancy.Domain;
 using SaaS.Web.Access;
 using SaaS.Web.Orchard;
 using Xunit;
