@@ -44,15 +44,20 @@ public sealed partial class M6BackupSqlTests
             // These valid JSON events survive the restore/recovery assertions unchanged.
             await using (var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct))
             await using (var fill = SqlOperations.Command(sql, """
+                SET NOCOUNT ON;
+                CREATE TABLE #M6RestoreAuditPayload ([Json] nvarchar(max) NOT NULL);
+                INSERT INTO #M6RestoreAuditPayload ([Json])
+                SELECT TOP (32768) CONVERT(nvarchar(max), N'{"drill":"')
+                    + CONVERT(varchar(4096), CRYPT_GEN_RANDOM(2048), 2) + N'"}'
+                FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+                SET NOCOUNT OFF;
                 INSERT INTO [audit].[Events]
                     ([Id], [TenantId], [ActorId], [Action], [PayloadHash], [SecurityGeneration],
                      [ResultRevision], [OccurredAt], [CorrelationId], [ChangesJson])
-                SELECT TOP (32768) NEWID(), @tenant, @actor, 'M6RestoreCrashFixture',
-                    CONVERT(varchar(64), HASHBYTES('SHA2_256', payload.Json), 2), @generation,
-                    1, SYSUTCDATETIME(), @correlation, payload.Json
-                FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b
-                CROSS APPLY (SELECT CONVERT(nvarchar(max), N'{"drill":"')
-                    + CONVERT(varchar(4096), CRYPT_GEN_RANDOM(2048), 2) + N'"}' AS Json) AS payload;
+                SELECT NEWID(), @tenant, @actor, 'M6RestoreCrashFixture',
+                    CONVERT(varchar(64), HASHBYTES('SHA2_256', [Json]), 2), @generation,
+                    1, SYSUTCDATETIME(), @correlation, [Json]
+                FROM #M6RestoreAuditPayload;
                 """, ("@tenant", Alpha.Id), ("@actor", setup.Http.UserId),
                 ("@generation", (await CurrentAsync()).AuthorizationGeneration), ("@correlation", operation.ToString("N"))))
             { fill.CommandTimeout = 180; Assert.Equal(32768, await fill.ExecuteNonQueryAsync(Ct)); }
