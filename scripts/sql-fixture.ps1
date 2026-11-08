@@ -2,6 +2,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+. (Join-Path $PSScriptRoot 'sql-image.ps1')
 $image = 'mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04'
 $name = 'saas-m0-' + [Guid]::NewGuid().ToString('N')
 $oldSa = $env:MSSQL_SA_PASSWORD
@@ -44,8 +45,7 @@ try {
     if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) { throw 'BLOCKED: Docker is required for the disposable SQL fixture.' }
     if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::add-mask::$sa"; Write-Host "::add-mask::$runtimePassword" }
     $env:MSSQL_SA_PASSWORD = $sa
-    & docker pull $image
-    if ($LASTEXITCODE -ne 0) { throw 'BLOCKED: pinned SQL image could not be acquired.' }
+    $report.digest = Get-SaasPinnedSqlImageDigest $image
     & docker run --detach --name $name --env ACCEPT_EULA=Y --env MSSQL_PID=Developer --env MSSQL_SA_PASSWORD --publish '127.0.0.1::1433' $image | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'SQL fixture start failed.' }
     $started = $true
@@ -85,9 +85,6 @@ GO
     $report.sqlSmokeExitCode = $positiveCode
     $report.executed++
     if ($positiveCode -ne 0) { throw 'Real SQL smoke failed.' }
-    $digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot record SQL image identity.' }
-    $report.digest = $digest
     $code = 0
 } catch {
     $blocked = $_.Exception.Message -like 'BLOCKED:*'
