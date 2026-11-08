@@ -4,6 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+. (Join-Path $PSScriptRoot 'sql-image.ps1')
 $root = Split-Path $PSScriptRoot -Parent
 $image = 'mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04'
 $name = 'saas-m1-' + [Guid]::NewGuid().ToString('N')
@@ -23,8 +24,7 @@ try {
     if (-not (Get-Command docker -CommandType Application -ErrorAction SilentlyContinue)) { throw 'BLOCKED: Docker is required.' }
     $env:MSSQL_SA_PASSWORD = 'Aa1!' + [Guid]::NewGuid().ToString('N')
     if ($env:GITHUB_ACTIONS -eq 'true') { Write-Host "::add-mask::$env:MSSQL_SA_PASSWORD" }
-    & docker pull $image
-    if ($LASTEXITCODE -ne 0) { throw 'BLOCKED: pinned SQL image unavailable.' }
+    $report.digest = Get-SaasPinnedSqlImageDigest $image
     & docker run --detach --name $name --env ACCEPT_EULA=Y --env MSSQL_PID=Developer --env MSSQL_SA_PASSWORD --publish '127.0.0.1::1433' $image | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'SQL instance failed to start.' }
     $started = $true
@@ -43,7 +43,7 @@ try {
     $report.testExitCode = $LASTEXITCODE
     $files = @(Get-ChildItem artifacts/test-results/m1-sql -Filter *.trx)
     if ($files.Count -ne 1) { throw 'Exactly one fresh SQL test evidence file is required.' }
-    [xml]$trx = Get-Content $files[0].FullName -Raw
+    [xml]$trx = Get-Content -LiteralPath $files[0].FullName -Raw
     $counters = $trx.TestRun.ResultSummary.Counters
     foreach ($counter in @('total', 'executed', 'passed', 'failed')) { $report[$counter] = [int]$counters.$counter }
     $report.skipped = $report.total - $report.executed
@@ -70,8 +70,6 @@ try {
     $isolation = @($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName -like '*.Cold_start_isolates_a_customer_secret_fault(*' })
     if ($isolation.Count -ne 6 -or @($isolation | Where-Object { $_.outcome -ne 'Passed' }).Count -ne 0) { throw 'All six cold-process secret/lifecycle isolation cases must pass.' }
     $report.mandatoryCases = $required + @($isolation | ForEach-Object { $_.testName })
-    $report.digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw 'Cannot record image identity.' }
     $code = 0
 } catch {
     Write-Host ('FAIL: ' + $_.Exception.Message)

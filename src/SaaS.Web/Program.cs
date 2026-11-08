@@ -21,6 +21,7 @@ else if (TenancyConnections.RuntimeConfigured)
     NativeServices.Add(builder.Services, new RegistryShellSettings(new TenancyConnections()), runtimeRoutes: true);
 else builder.Services.AddOrchardCore();
 var app = builder.Build();
+if (TenancyConnections.RuntimeConfigured) app.Use(SaaS.Web.Release.PlatformReleaseRuntimeGate.EnterAsync);
 if (identityEnabled) IdentityRuntimeHost.Use(app);
 else
 {

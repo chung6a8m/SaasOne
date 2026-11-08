@@ -5,7 +5,7 @@ namespace SaaS.Tenancy.Operations;
 
 /// <summary>
 /// A same-host process fence plus a server-side session lock. Neither expires with elapsed time.
-/// A crashed owner's SQL sessions must also be absent before another owner can perform DDL.
+/// A crashed owner's SQL sessions and external migration process must stop before takeover.
 /// </summary>
 public sealed class OperationLease : IAsyncDisposable
 {
@@ -15,7 +15,15 @@ public sealed class OperationLease : IAsyncDisposable
     public string Resource { get; }
     private OperationLease(FileStream file, SqlConnection connection, string hostId, string resource) => (_file, Connection, HostId, Resource) = (file, connection, hostId, resource);
 
-    public static async Task<OperationLease> AcquireAsync(string connection, string resource, CancellationToken cancellationToken)
+    public static Task<OperationLease> AcquireAsync(string connection, string resource, CancellationToken cancellationToken)
+        => AcquireCoreAsync(connection, resource, false, cancellationToken);
+
+    // Only the physical restore workflow may cross its own durable pending-source barrier.
+    // Generic recovery, plan, release, provisioning and purge paths cannot skip that checkpoint.
+    internal static Task<OperationLease> AcquireRestoreAsync(string connection, string resource, CancellationToken cancellationToken)
+        => AcquireCoreAsync(connection, resource, true, cancellationToken);
+
+    private static async Task<OperationLease> AcquireCoreAsync(string connection, string resource, bool physicalRestore, CancellationToken cancellationToken)
     {
         var home = Path.GetFullPath(TenancyConnections.Required("SAAS_OPERATIONS_HOME"));
         Directory.CreateDirectory(home);
@@ -26,6 +34,8 @@ public sealed class OperationLease : IAsyncDisposable
         SqlConnection? sql = null;
         try
         {
+            if (resource == PlatformReleaseBarrier.Resource || resource.StartsWith("tenant-", StringComparison.Ordinal))
+                await OperationChildProcess.DemandQuiescentAsync(resource, cancellationToken);
             var hostFile = Path.Combine(home, "host-id");
             if (!File.Exists(hostFile))
             {
@@ -42,12 +52,24 @@ public sealed class OperationLease : IAsyncDisposable
             var hostId = (await File.ReadAllTextAsync(hostFile, cancellationToken)).Trim();
             if (!Guid.TryParseExact(hostId, "N", out _)) throw new TenantContractException("invalid_operation_host");
             sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+            if (resource != "platform-bootstrap")
+            {
+                var global = await SqlOperations.ScalarAsync(sql, """
+                    DECLARE @result int;
+                    EXEC @result = sys.sp_getapplock @Resource = @resource, @LockMode = @mode, @LockOwner = 'Session', @LockTimeout = 0;
+                    SELECT @result;
+                    """, cancellationToken, ("@resource", PlatformReleaseBarrier.Lock),
+                    ("@mode", resource == PlatformReleaseBarrier.Resource ? "Exclusive" : "Shared"));
+                if (global is not int granted || granted < 0) throw new TenantContractException("platform_release_busy");
+                if (resource != PlatformReleaseBarrier.Resource) await PlatformReleaseBarrier.DemandClearAsync(sql, cancellationToken);
+            }
             var status = await SqlOperations.ScalarAsync(sql, """
                 DECLARE @status int;
                 EXEC @status = sys.sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0;
                 SELECT @status;
                 """, cancellationToken, ("@resource", resource));
             if (status is not int result || result < 0) throw new TenantContractException("operation_busy");
+            if (!physicalRestore) await PhysicalRestoreBarrier.DemandClearAsync(sql, resource, cancellationToken);
             return new(file, sql, hostId, resource);
         }
         catch
@@ -62,6 +84,13 @@ public sealed class OperationLease : IAsyncDisposable
     {
         var mode = await SqlOperations.ScalarAsync(Connection, "SELECT APPLOCK_MODE('public', @resource, 'Session')", cancellationToken, ("@resource", Resource));
         if (mode as string != "Exclusive") throw new TenantContractException("operation_lock_lost");
+        if (Resource != "platform-bootstrap")
+        {
+            var global = await SqlOperations.ScalarAsync(Connection, "SELECT APPLOCK_MODE('public', @resource, 'Session')", cancellationToken,
+                ("@resource", PlatformReleaseBarrier.Lock));
+            if (global as string != (Resource == PlatformReleaseBarrier.Resource ? "Exclusive" : "Shared"))
+                throw new TenantContractException("operation_lock_lost");
+        }
     }
 
     public async ValueTask DisposeAsync()

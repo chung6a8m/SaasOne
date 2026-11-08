@@ -68,5 +68,5 @@ public sealed class OrdersDbContext(DbContextOptions<OrdersDbContext> options) :
 
 public sealed class OrdersDesignTimeFactory : IDesignTimeDbContextFactory<OrdersDbContext>
 {
-    public OrdersDbContext CreateDbContext(string[] args) => OrdersDbContext.Open("Server=localhost;Database=saas_design_only;Integrated Security=True");
+    public OrdersDbContext CreateDbContext(string[] args) => OrdersDbContext.Open(SaaS.Abstractions.Tenancy.BundleConnection.ForDesignTime("Server=localhost;Database=saas_design_only;Integrated Security=True"));
 }

@@ -241,6 +241,13 @@ public sealed class M4OrderSqlTests
         h.SetActor(Guid.NewGuid());
         var rejected = await h.Service().ExecuteAsync(M4PolicyTests.Command(pending.Order, OrderAction.Reject, "reject-key"), Ct);
         Assert.Equal(OrderStatus.Rejected, rejected.Order.Status);
+        var rejectedDetail = await h.Service().GetDetailAsync(rejected.Order.Id, Ct);
+        var rejectedDecision = Assert.Single(rejectedDetail.ApprovalDecisions!);
+        Assert.Equal(pending.Order.Revision, rejectedDecision.SubmittedRevision);
+        Assert.Equal(rejected.Order.Revision, rejectedDecision.ResultRevision);
+        Assert.False(rejectedDecision.Approved);
+        Assert.Equal("Incorrect amount", rejectedDecision.Reason);
+        Assert.NotEqual(default, rejectedDecision.DecidedAt);
         var replay = await h.Service().ExecuteAsync(M4PolicyTests.Command(pending.Order, OrderAction.Reject, "reject-key"), Ct);
         Assert.True(replay.Replayed); Assert.Equal(rejected.Order, replay.Order);
         h.SetActor(creator);
@@ -254,6 +261,19 @@ public sealed class M4OrderSqlTests
         await Error(409, () => h.Service().ExecuteAsync(M4PolicyTests.Command(pending.Order, OrderAction.Approve, "stale-decision"), Ct));
         var approved = await h.Service().ExecuteAsync(M4PolicyTests.Command(resubmitted.Order, OrderAction.Approve, "approve-key"), Ct);
         Assert.Equal(OrderStatus.Confirmed, approved.Order.Status); Assert.Equal(6, approved.Order.Revision); Assert.True(approved.Order.ApprovalRequired);
+        var decidedDetail = await h.Service().GetDetailAsync(approved.Order.Id, Ct);
+        var history = Assert.IsType<OrderApprovalDecisionView[]>(decidedDetail.ApprovalDecisions);
+        Assert.Equal(2, history.Length);
+        Assert.Equal(pending.Order.Revision, history[0].SubmittedRevision);
+        Assert.Equal(rejected.Order.Revision, history[0].ResultRevision);
+        Assert.False(history[0].Approved);
+        Assert.Equal("Incorrect amount", history[0].Reason);
+        Assert.Equal(resubmitted.Order.Revision, history[1].SubmittedRevision);
+        Assert.Equal(approved.Order.Revision, history[1].ResultRevision);
+        Assert.True(history[1].Approved);
+        Assert.Null(history[1].Reason);
+        Assert.NotEqual(default, history[1].DecidedAt);
+        Assert.Null((await h.Service().GetAsync(approved.Order.Id, Ct)).ApprovalDecisions);
         Assert.Equal(2, await h.CountAsync("[fixture].[Requests]", Ct));
         await h.CountsAsync(1, 6, 6, Ct);
     }
@@ -312,7 +332,7 @@ internal sealed class M4SqlHarness : IAsyncDisposable
             {
                 await using var sql = await SqlOperations.OpenAsync(target.Connection, ct);
                 await SqlOperations.ExecuteAsync(sql, "CREATE SCHEMA [fixture];", ct);
-                await SqlOperations.ExecuteAsync(sql, "CREATE TABLE [fixture].[Requests] ([OrderId] uniqueidentifier NOT NULL, [Revision] bigint NOT NULL, [Version] varchar(16) NOT NULL, [Decision] bit NULL, [Reason] nvarchar(1000) NULL, CONSTRAINT [PK_FixtureRequests] PRIMARY KEY ([OrderId], [Revision]));", ct);
+                await SqlOperations.ExecuteAsync(sql, "CREATE TABLE [fixture].[Requests] ([OrderId] uniqueidentifier NOT NULL, [Revision] bigint NOT NULL, [Version] varchar(16) NOT NULL, [Decision] bit NULL, [Reason] nvarchar(1000) NULL, [DecidedAt] datetimeoffset NULL, CONSTRAINT [PK_FixtureRequests] PRIMARY KEY ([OrderId], [Revision]));", ct);
                 result.Handler = new();
             }
             return result;
@@ -343,6 +363,28 @@ internal sealed class M4ApprovalFixture : IOrderApprovalHandler
         command.Transaction = (SqlTransaction)tx.Transaction;
         await command.ExecuteNonQueryAsync(ct);
     }
+    public async Task<OrderApprovalDecisionView[]> ReadDecisionsAsync(Guid orderId, long currentRevision, TenantTransaction tx, CancellationToken ct)
+    {
+        if (orderId == Guid.Empty || currentRevision < 2) throw new AccessDeniedException(503, "approval_history_invalid");
+        await using var command = SqlOperations.Command((SqlConnection)tx.Connection, """
+            SELECT [Revision], [Decision], [Reason], [DecidedAt] FROM [fixture].[Requests]
+            WHERE [OrderId] = @id AND [Decision] IS NOT NULL ORDER BY [Revision]
+            """, ("@id", orderId));
+        command.Transaction = (SqlTransaction)tx.Transaction;
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var decisions = new List<OrderApprovalDecisionView>();
+        while (await reader.ReadAsync(ct))
+        {
+            var revision = reader.GetInt64(0);
+            var approved = reader.GetBoolean(1);
+            var reason = reader.IsDBNull(2) ? null : reader.GetString(2);
+            if (revision < 2 || revision >= currentRevision || reader.IsDBNull(3)
+                || (approved && reason is not null) || (!approved && string.IsNullOrWhiteSpace(reason)))
+                throw new AccessDeniedException(503, "approval_history_invalid");
+            decisions.Add(new(revision, checked(revision + 1), approved, reason, reader.GetFieldValue<DateTimeOffset>(3)));
+        }
+        return decisions.ToArray();
+    }
     public async Task SubmittedAsync(OrderApprovalSubmission submission, TenantTransaction tx, CancellationToken ct)
     {
         await using var command = SqlOperations.Command((SqlConnection)tx.Connection,
@@ -355,7 +397,7 @@ internal sealed class M4ApprovalFixture : IOrderApprovalHandler
     public async Task DecidedAsync(OrderApprovalDecision decision, TenantTransaction tx, CancellationToken ct)
     {
         await using var command = SqlOperations.Command((SqlConnection)tx.Connection,
-            "UPDATE [fixture].[Requests] SET [Decision] = @approved, [Reason] = @reason WHERE [OrderId] = @id AND [Revision] = @revision AND [Version] = @version AND [Decision] IS NULL",
+            "UPDATE [fixture].[Requests] SET [Decision] = @approved, [Reason] = @reason, [DecidedAt] = TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00') WHERE [OrderId] = @id AND [Revision] = @revision AND [Version] = @version AND [Decision] IS NULL",
             ("@id", decision.OrderId), ("@revision", decision.SubmittedRevision), ("@version", decision.SubmittedVersion),
             ("@approved", decision.Approved), ("@reason", decision.Reason));
         command.Transaction = (SqlTransaction)tx.Transaction;

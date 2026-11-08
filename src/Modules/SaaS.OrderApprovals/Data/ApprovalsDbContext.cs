@@ -39,5 +39,5 @@ public sealed class ApprovalsDbContext(DbContextOptions<ApprovalsDbContext> opti
 
 public sealed class ApprovalsDesignTimeFactory : IDesignTimeDbContextFactory<ApprovalsDbContext>
 {
-    public ApprovalsDbContext CreateDbContext(string[] args) => ApprovalsDbContext.Open("Server=localhost;Database=saas_design_only;Integrated Security=True");
+    public ApprovalsDbContext CreateDbContext(string[] args) => ApprovalsDbContext.Open(SaaS.Abstractions.Tenancy.BundleConnection.ForDesignTime("Server=localhost;Database=saas_design_only;Integrated Security=True"));
 }

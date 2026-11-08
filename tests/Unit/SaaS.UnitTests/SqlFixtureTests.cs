@@ -7,6 +7,7 @@ namespace SaaS.UnitTests;
 public sealed class SqlFixtureTests
 {
     private const string TestSha = "0123456789abcdef0123456789abcdef01234567";
+    private const string PinnedDigest = "mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718";
 
     private static string RepositoryRoot()
     {
@@ -42,7 +43,7 @@ public sealed class SqlFixtureTests
         Assert.True(fixture.Exists("sql-command.json"));
 
         var second = await fixture.RunAsync("pull-fail");
-        Assert.NotEqual(0, second.ExitCode);
+        Assert.True(second.ExitCode != 0, second.Output);
         using var failed = fixture.ReadReport();
         Assert.Equal("BLOCKED", failed.RootElement.GetProperty("status").GetString());
         Assert.Equal(second.ExitCode, failed.RootElement.GetProperty("exitCode").GetInt32());
@@ -58,7 +59,7 @@ public sealed class SqlFixtureTests
     {
         using var fixture = new FakeSqlFixture();
         var result = await fixture.RunAsync("cleanup-fail");
-        Assert.NotEqual(0, result.ExitCode);
+        Assert.True(result.ExitCode != 0, result.Output);
         using var failed = fixture.ReadReport();
         Assert.Equal("FAIL", failed.RootElement.GetProperty("status").GetString());
         Assert.Equal(result.ExitCode, failed.RootElement.GetProperty("exitCode").GetInt32());
@@ -66,6 +67,59 @@ public sealed class SqlFixtureTests
         Assert.Equal(TestSha, failed.RootElement.GetProperty("sourceSha").GetString());
         Assert.False(string.IsNullOrWhiteSpace(failed.RootElement.GetProperty("runId").GetString()));
         Assert.Equal(0, failed.RootElement.GetProperty("passed").GetInt32());
+        Assert.False(fixture.Exists("sql-smoke.json"));
+        Assert.False(fixture.Exists("sql-command.json"));
+    }
+
+    [Fact]
+    public async Task Trusted_local_SQL_image_skips_registry_pull_and_records_verified_digest()
+    {
+        using var fixture = new FakeSqlFixture();
+        var result = await fixture.RunAsync("cached-pull-fail");
+        Assert.True(result.ExitCode == 0, result.Output);
+        using var report = fixture.ReadReport();
+        Assert.Equal("PASS", report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(PinnedDigest, report.RootElement.GetProperty("digest").GetString());
+        Assert.Contains("verified cached SQL image", result.Output);
+        Assert.False(fixture.Pulled);
+    }
+
+    [Fact]
+    public async Task Image_not_cached_is_pulled_and_digest_verified_before_SQL()
+    {
+        using var fixture = new FakeSqlFixture();
+        var result = await fixture.RunAsync("uncached-pull");
+        Assert.True(result.ExitCode == 0, result.Output);
+        Assert.True(fixture.Pulled);
+        using var report = fixture.ReadReport();
+        Assert.Equal("PASS", report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(PinnedDigest, report.RootElement.GetProperty("digest").GetString());
+    }
+
+    [Fact]
+    public async Task Untrusted_cached_image_fails_closed_without_running_SQL_smoke()
+    {
+        using var fixture = new FakeSqlFixture();
+        var result = await fixture.RunAsync("untrusted-cache");
+        Assert.True(result.ExitCode != 0, result.Output);
+        using var report = fixture.ReadReport();
+        Assert.Equal("BLOCKED", report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(0, report.RootElement.GetProperty("passed").GetInt32());
+        Assert.False(fixture.Pulled);
+        Assert.False(fixture.Exists("sql-smoke.json"));
+        Assert.False(fixture.Exists("sql-command.json"));
+    }
+
+    [Fact]
+    public async Task Pulled_SQL_image_with_wrong_digest_is_rejected_before_SQL_execution()
+    {
+        using var fixture = new FakeSqlFixture();
+        var result = await fixture.RunAsync("untrusted-after-pull");
+        Assert.True(result.ExitCode != 0, result.Output);
+        Assert.True(fixture.Pulled);
+        using var report = fixture.ReadReport();
+        Assert.Equal("BLOCKED", report.RootElement.GetProperty("status").GetString());
+        Assert.Equal(0, report.RootElement.GetProperty("passed").GetInt32());
         Assert.False(fixture.Exists("sql-smoke.json"));
         Assert.False(fixture.Exists("sql-command.json"));
     }
@@ -83,11 +137,14 @@ public sealed class SqlFixtureTests
             File.Copy(
                 Path.Combine(RepositoryRoot(), "scripts", "sql-fixture.ps1"),
                 Path.Combine(root, "scripts", "sql-fixture.ps1"));
+            File.Copy(
+                Path.Combine(RepositoryRoot(), "scripts", "sql-image.ps1"),
+                Path.Combine(root, "scripts", "sql-image.ps1"));
             File.WriteAllText(Path.Combine(root, "scripts", "check.ps1"), CheckScript);
 
             if (OperatingSystem.IsWindows())
             {
-                File.WriteAllText(Path.Combine(binaries, "docker.cmd"), DockerWindows);
+                File.WriteAllText(Path.Combine(binaries, "docker.cmd"), DockerWindows.ReplaceLineEndings("\r\n"));
                 File.WriteAllText(Path.Combine(binaries, "git.cmd"), "@echo off\r\necho " + TestSha + "\r\n");
             }
             else
@@ -98,6 +155,7 @@ public sealed class SqlFixtureTests
         }
 
         public bool Exists(string name) => File.Exists(Path.Combine(root, "artifacts", "verification", name));
+        public bool Pulled => File.Exists(Path.Combine(binaries, "image-pulled.marker"));
 
         public JsonDocument ReadReport() =>
             JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "artifacts", "verification", "sql-fixture.json")));
@@ -114,6 +172,7 @@ public sealed class SqlFixtureTests
             foreach (var arg in new[] { "-NoProfile", "-File", "scripts/sql-fixture.ps1" })
                 start.ArgumentList.Add(arg);
             start.Environment["FAKE_DOCKER_MODE"] = mode;
+            start.Environment["FAKE_DOCKER_PULL_MARKER"] = Path.Combine(binaries, "image-pulled.marker");
             start.Environment["PATH"] = binaries + Path.PathSeparator + start.Environment["PATH"];
             start.Environment.Remove("GITHUB_ACTIONS");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot start fixture.");
@@ -159,12 +218,23 @@ public sealed class SqlFixtureTests
             #!/bin/sh
             case "$1" in
               pull)
-                if [ "$FAKE_DOCKER_MODE" = "pull-fail" ]; then exit 42; fi
+                if [ "$FAKE_DOCKER_MODE" = "pull-fail" ] || [ "$FAKE_DOCKER_MODE" = "cached-pull-fail" ]; then exit 42; fi
+                if [ "$FAKE_DOCKER_MODE" = "uncached-pull" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; then echo acquired > "$FAKE_DOCKER_PULL_MARKER"; fi
                 ;;
               run) echo fake-container ;;
               exec) exit 0 ;;
               port) echo 127.0.0.1:31433 ;;
-              image) echo mcr.microsoft.com/mssql/server@sha256:fake-test-digest ;;
+              image)
+                if [ "$FAKE_DOCKER_MODE" = "pull-fail" ]; then exit 12; fi
+                if [ "$FAKE_DOCKER_MODE" = "uncached-pull" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; then
+                  if [ ! -f "$FAKE_DOCKER_PULL_MARKER" ]; then exit 12; fi
+                fi
+                if [ "$FAKE_DOCKER_MODE" = "untrusted-cache" ] || [ "$FAKE_DOCKER_MODE" = "untrusted-after-pull" ]; then
+                  echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                else
+                  echo mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
+                fi
+                ;;
               rm)
                 if [ "$FAKE_DOCKER_MODE" = "cleanup-fail" ]; then exit 17; fi
                 ;;
@@ -176,15 +246,36 @@ public sealed class SqlFixtureTests
         private const string DockerWindows = """
             @echo off
             if "%~1"=="pull" (
-                if "%FAKE_DOCKER_MODE%"=="pull-fail" exit /b 42
+                if "%FAKE_DOCKER_MODE%"=="pull-fail" exit 42
+                if "%FAKE_DOCKER_MODE%"=="cached-pull-fail" exit 42
+                if "%FAKE_DOCKER_MODE%"=="uncached-pull" echo acquired>"%FAKE_DOCKER_PULL_MARKER%"
+                if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" echo acquired>"%FAKE_DOCKER_PULL_MARKER%"
                 exit /b 0
             )
             if "%~1"=="run" (echo fake-container & exit /b 0)
             if "%~1"=="exec" exit /b 0
             if "%~1"=="port" (echo 127.0.0.1:31433 & exit /b 0)
-            if "%~1"=="image" (echo mcr.microsoft.com/mssql/server@sha256:fake-test-digest & exit /b 0)
+            if "%~1"=="image" (
+                if "%FAKE_DOCKER_MODE%"=="pull-fail" exit 12
+                if "%FAKE_DOCKER_MODE%"=="uncached-pull" (
+                    if not exist "%FAKE_DOCKER_PULL_MARKER%" exit 12
+                )
+                if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" (
+                    if not exist "%FAKE_DOCKER_PULL_MARKER%" exit 12
+                )
+                if "%FAKE_DOCKER_MODE%"=="untrusted-cache" (
+                    echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    exit /b 0
+                )
+                if "%FAKE_DOCKER_MODE%"=="untrusted-after-pull" (
+                    echo mcr.microsoft.com/mssql/server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    exit /b 0
+                )
+                echo mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718
+                exit /b 0
+            )
             if "%~1"=="rm" (
-                if "%FAKE_DOCKER_MODE%"=="cleanup-fail" exit /b 17
+                if "%FAKE_DOCKER_MODE%"=="cleanup-fail" exit 17
                 exit /b 0
             )
             exit /b 44

@@ -17,3 +17,17 @@ function Get-M3EvidenceInventory {
         unexpectedCases = $unexpected
     }
 }
+
+# Read policy test results from all M0 TRX suites. VSTest may append "[1]" to
+# filenames when two test assemblies emit the same basename; -LiteralPath is
+# mandatory so bracketed filenames cannot be interpreted as wildcard patterns.
+function Get-M3PolicyTrxResults {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ResultsDirectory,
+          [Parameter(Mandatory)][string]$TestNamePattern)
+    foreach ($file in Get-ChildItem -LiteralPath $ResultsDirectory -Filter '*.trx' -File) {
+        [xml]$trx = Get-Content -LiteralPath $file.FullName -Raw
+        @($trx.TestRun.Results.UnitTestResult) |
+            Where-Object { $_.testName -cmatch $TestNamePattern }
+    }
+}

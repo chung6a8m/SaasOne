@@ -50,5 +50,5 @@ public sealed class AccessDbContext(DbContextOptions<AccessDbContext> options) :
 
 public sealed class AccessDesignTimeFactory : IDesignTimeDbContextFactory<AccessDbContext>
 {
-    public AccessDbContext CreateDbContext(string[] args) => AccessDbContext.Open("Server=localhost;Database=saas_design_only;Integrated Security=True");
+    public AccessDbContext CreateDbContext(string[] args) => AccessDbContext.Open(SaaS.Abstractions.Tenancy.BundleConnection.ForDesignTime("Server=localhost;Database=saas_design_only;Integrated Security=True"));
 }
