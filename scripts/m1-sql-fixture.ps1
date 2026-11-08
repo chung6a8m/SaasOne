@@ -43,7 +43,7 @@ try {
     $report.testExitCode = $LASTEXITCODE
     $files = @(Get-ChildItem artifacts/test-results/m1-sql -Filter *.trx)
     if ($files.Count -ne 1) { throw 'Exactly one fresh SQL test evidence file is required.' }
-    [xml]$trx = Get-Content $files[0].FullName -Raw
+    [xml]$trx = Get-Content -LiteralPath $files[0].FullName -Raw
     $counters = $trx.TestRun.ResultSummary.Counters
     foreach ($counter in @('total', 'executed', 'passed', 'failed')) { $report[$counter] = [int]$counters.$counter }
     $report.skipped = $report.total - $report.executed
