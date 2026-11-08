@@ -19,6 +19,7 @@ function Get-DrillError($ErrorObject) {
     $exception = $ErrorObject.Exception
     while ($null -ne $exception.InnerException) { $exception = $exception.InnerException }
     if ($null -ne $exception.PSObject.Properties['Code']) { return [string]$exception.Code }
+    if ($exception.Message -cmatch '^[a-z][a-z0-9_]+$') { return $exception.Message }
     return $exception.GetType().Name
 }
 function Import-ProductionTypes {
@@ -46,8 +47,8 @@ if ($Mode -ne 'Parent') {
     } else {
         $bytes = [IO.File]::ReadAllBytes($path)
         $marker = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
-        if ($marker.Version -ne 1 -or $marker.Resource -cne $Resource -or $marker.OperationId -ne $OperationId
-            -or $marker.OwnerId -ne $OwnerId -or $null -ne $marker.ProcessId -or $null -ne $marker.StartUtcTicks) {
+        if ($marker.Version -ne 1 -or $marker.Resource -cne $Resource -or $marker.OperationId -ne $OperationId -or
+            $marker.OwnerId -ne $OwnerId -or $null -ne $marker.ProcessId -or $null -ne $marker.StartUtcTicks) {
             throw 'durable_intent_corrupted'
         }
         $demand = $type.GetMethod('DemandQuiescentAsync', [Reflection.BindingFlags]'NonPublic,Static')
@@ -139,12 +140,13 @@ try {
     Import-ProductionTypes
     foreach ($path in @($base,$backup,$keys,$operations,$public)) { [IO.Directory]::CreateDirectory($path) | Out-Null }
     if ($IsWindows) {
-        $password = 'Aa1!' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+        $password = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant() + 'Aa1!'
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
         $sqlAccount = New-LocalUser -Name $sqlUser -Password $secure -Description 'Disposable M6 SQL principal rehearsal'
         $accounts.Add($sqlUser)
         $null = New-LocalUser -Name $otherUser -Password $secure -Description 'Disposable M6 unauthorized principal rehearsal'
         $accounts.Add($otherUser)
+        foreach ($account in $accounts) { Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $account }
         # Public controls prove the impersonated tokens work; a denied logon must not masquerade as ACL denial.
         foreach ($path in @($base,$public)) {
             $acl = Get-Acl -LiteralPath $path
@@ -267,13 +269,16 @@ public static class M6StoragePrincipal {
     $report.errorCode = Get-DrillError $_
     $report.errorLine = $_.InvocationInfo.ScriptLineNumber
 } finally {
-    if ($null -ne $writerProcess) {
-        if (-not $writerProcess.HasExited) { $writerProcess.Kill($true); $writerProcess.WaitForExit() }
-        foreach ($drain in $drains) { $drain.GetAwaiter().GetResult() }
-        $writerProcess.Dispose()
-    }
+    try {
+        if ($null -ne $writerProcess) {
+            if (-not $writerProcess.HasExited) { $writerProcess.Kill($true); $writerProcess.WaitForExit() }
+            foreach ($drain in $drains) { $drain.GetAwaiter().GetResult() }
+            $writerProcess.Dispose()
+        }
+    } catch { $code = 1; $report.processCleanup = 'FAIL' }
     foreach ($name in $previous.Keys) { [Environment]::SetEnvironmentVariable($name, $previous[$name]) }
-    foreach ($value in @($key,$replacement)) { if ($null -ne $value) { [Security.Cryptography.CryptographicOperations]::ZeroMemory($value) } }
+    if ($null -ne $key) { [Array]::Clear($key, 0, $key.Length) }
+    if ($null -ne $replacement) { [Array]::Clear($replacement, 0, $replacement.Length) }
     $password = $null
     try {
         foreach ($account in $accounts) {
