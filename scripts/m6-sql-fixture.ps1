@@ -3,6 +3,7 @@ param([Parameter(Mandatory)][string]$Package, [Parameter(Mandatory)][string]$Man
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+. (Join-Path $PSScriptRoot 'sql-image.ps1')
 . "$PSScriptRoot/m6-common.ps1"
 . "$PSScriptRoot/m3-evidence-inventory.ps1"
 $root = Split-Path $PSScriptRoot -Parent
@@ -33,9 +34,7 @@ try {
     $env:SAAS_BACKUP_STORE_ACK = 'private-shared-store-v1'
     $env:SAAS_BACKUP_MANIFEST_KEY = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
     $env:SAAS_M6_RELEASE_PACKAGE = $proof.root; $env:SAAS_RELEASE_MANIFEST_SHA256 = $ManifestSha256
-    Invoke-M6Checked docker @('pull',$image)
-    $report.digest = (& docker image inspect $image --format '{{index .RepoDigests 0}}' | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($report.digest)) { throw 'image_identity_missing' }
+    $report.digest = Get-SaasPinnedSqlImageDigest $image
     # Root is confined to this disposable fixture so a private host-owned bind mount works on Linux/Windows.
     # Never use this account model or these generated secrets in a production deployment.
     $runAttempted = $true
