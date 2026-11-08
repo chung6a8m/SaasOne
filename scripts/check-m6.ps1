@@ -14,6 +14,7 @@ try {
     $dirty = @(& git status --porcelain=v1 --untracked-files=all)
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw 'full_verification_requires_clean_checkout' }
     Invoke-M6Checked pwsh @('-NoProfile','-File',"$PSScriptRoot/test-m6-evidence.ps1")
+    Invoke-M6Checked pwsh @('-NoProfile','-File',"$PSScriptRoot/test-m6-bundle-locks.ps1")
     # Do not weaken or replace any of the preceding milestone gates.
     Invoke-M6Checked pwsh @('-NoProfile','-File',"$PSScriptRoot/check-m5.ps1")
     $policyRequired = @(Get-Content "$PSScriptRoot/m6-policy-cases.json" -Raw | ConvertFrom-Json)
