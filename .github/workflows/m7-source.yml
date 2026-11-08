@@ -1,0 +1,37 @@
+name: M7 tracked source provenance (not acceptance)
+on:
+  push:
+    branches: [codex/m7-acceptance]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m7-source-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Record tracked source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          mkdir -p "$RUNNER_TEMP/m7-source"
+          git rev-parse HEAD > "$RUNNER_TEMP/m7-source/source-sha.txt"
+          git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/m7-source/tree-sha.txt"
+          git archive --format=tar HEAD > "$RUNNER_TEMP/m7-source/source.tar"
+          cd "$RUNNER_TEMP/m7-source"
+          sha256sum source.tar > source.tar.sha256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m7-source-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m7-source/
+          if-no-files-found: error
+          retention-days: 7
