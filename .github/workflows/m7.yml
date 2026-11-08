@@ -1,10 +1,17 @@
-name: M7 four-tenant baseline and product reuse
+name: M7 four-tenant target rehearsal and product reuse
 on:
   push:
     branches: [main, codex/m7-acceptance-reuse]
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Baseline observes; Candidate evaluates proposals; Acceptance requires approval and inherited Full
+        type: choice
+        required: true
+        default: Candidate
+        options: [Baseline, Candidate, Acceptance]
 permissions:
   contents: read
 concurrency:
@@ -26,25 +33,29 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoProfile -File scripts/test-m7-target-readiness.ps1
           exit $LASTEXITCODE
-  baseline:
+  verification:
     needs: policy
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
           fetch-depth: 0
       - uses: ./.github/actions/pinned-toolchain
-      - name: Exact-source implementation and baseline verification (not milestone acceptance)
+      - name: Exact-source verification with explicit acceptance boundary
+        env:
+          M7_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'Candidate' }}
         shell: pwsh
         run: |
-          ./scripts/check-m7.ps1 -Mode Baseline
+          $arguments=@{Mode=$env:M7_MODE}
+          if ($env:M7_MODE -ne 'Baseline') { $arguments.Targets='tests/Load/m7-targets.json' }
+          ./scripts/check-m7.ps1 @arguments
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
-          name: m7-baseline-${{ github.sha }}-${{ github.run_attempt }}
+          name: m7-${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'Candidate' }}-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             artifacts/m7-runs/*.zip
             artifacts/m7-runs/*.zip.sha256

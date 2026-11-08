@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "sourceSha": "443e9ac2f0a51022de550437957f94a1e7dc6c23",
+  "sourceClean": true,
+  "mode": "Baseline",
+  "status": "PASS",
+  "acceptance": "NOT_GRANTED",
+  "repository": "chung6a8m/SaasOne",
+  "workflowRunId": 42496484263,
+  "artifactId": 13622894577,
+  "outerArchiveSha256": "d48578491ca71c979d79efbd33d8674500b9cd7b1adfe67574186e1711bf5308",
+  "innerArchiveSha256": "20155dcb7de1832a806afc9a205a0b10cac39bdbebc16b16c4c69384a5fe6b41",
+  "loadReportSha256": "97e9ae342ef8d2ac3d01c3b2cc7a508c1bcc35788c6fd57bdddb42187360b431",
+  "loadSamplesSha256": "7cd30b2648ad024fc1279b376e3d93581a935edb8d3f24adb1715c8efdd55bf5",
+  "loadConfigSha256": "694f09001e4ba2b40ba4ed07f93786daa8cb8fc0baaf7eaa9753507415f86adc",
+  "completedUtc": "2026-11-08T15:53:46.3764515+00:00",
+  "verifiedInventoryFileCount": 19,
+  "independentRecomputation": {
+    "rawSamples": 696,
+    "cells": 22,
+    "failedSamples": 0,
+    "statisticsMatch": true
+  },
+  "retention": "Original outer archive is also attached to the implementation conversation as m7-branch-baseline-443e9ac2.zip. GitHub Actions retention is seven days. Repository retains the exact load report and checksum provenance, not the full original archive; copy the attachment to the owner-controlled evidence store before relying on long-term archival.",
+  "limitations": [
+    "Not a new runtime execution.",
+    "Not owner target approval.",
+    "Branch baseline is an ancestor; PR synthetic merge baseline is deliberately not substituted."
+  ]
+}

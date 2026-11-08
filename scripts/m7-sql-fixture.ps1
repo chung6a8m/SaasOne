@@ -1,6 +1,6 @@
 # Only a fresh, disposable and pinned SQL Server is accepted. No external DB target.
 [CmdletBinding()]
-param([ValidateSet('Baseline','Acceptance')][string]$Mode = 'Baseline')
+param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode = 'Baseline')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false

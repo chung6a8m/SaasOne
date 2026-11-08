@@ -65,6 +65,31 @@ capacity measurements. CPU/GC deltas end before post-load integrity queries; pea
 a process-lifetime high-water mark. SQL-container CPU/wait profiling is separate, not inferred
 from application CPU alone.
 
+## Evaluate a proposed target without granting acceptance
+
+The retained branch baseline and engineering proposal are documented in
+`docs/decisions/m7-performance-targets.md`. The proposal is deliberately not fitted to the
+slow baseline. `tests/Load/m7-targets.json` starts with `reviewStatus=Proposed` and
+`reviewedBy=null`; it is not owner approval.
+
+```powershell
+pwsh -NoProfile -File scripts/check-m7.ps1 -Mode Candidate -Targets tests/Load/m7-targets.json
+```
+
+Candidate checks committed baseline ancestry, file/configuration hashes and target timing before
+running the M7 correctness/product/template/load gates. It writes `thresholds.json` with all 22
+cells and every p95/p99/throughput/sample-count failure, then returns nonzero on any failed target.
+It never grants acceptance, even when every proposed target passes. It does not run the embedded
+inherited Full gate; consult exact-source PR workflows for development regressions. Actual
+Acceptance retains that stronger embedded Full requirement.
+
+Automatic M7 push/PR workflows run Candidate after policy regressions. Manual workflow dispatch
+selects Baseline, Candidate or Acceptance; modes are validated and workflow permissions stay
+read-only. An expected performance gap still makes CI red: no `continue-on-error`, skipped
+mandatory case or baseline relabeling is used. The actual Acceptance entry point is covered by
+a disposable clean-Git regression proving unapproved targets produce BLOCKED/exit 2 before any
+build or SQL gate, while still packaging an evidence record.
+
 ## Lock targets before acceptance
 
 First retain a **passing** baseline `load.json` from a source commit that is an ancestor of the
@@ -78,14 +103,15 @@ latency/throughput values to auto-pass):
 
 - `schemaVersion`: 1; `loadConfigSha256`: lowercase SHA256 of the committed load configuration.
 - `baseline`: `sourceSha`, `reportPath`, `reportSha256`, and retained `artifactReference`.
-- `reviewedBy` and `decisionReference`: the real owner/review record, not an implementer's approval.
+- `reviewStatus`: `Approved` for Acceptance; `Proposed` definitions are allowed only for Candidate evaluation.
+- `reviewedBy` and `decisionReference`: the real owner/review record, not an implementer's approval. A nonempty reviewer alone does not grant approval.
 - `maxUnexpectedErrors`: 0.
 - `limits`: exactly one entry for each of the 22 cells, with `tenant`, `operation`, positive numeric
-  `p95Ms`, `p99Ms` (at least p95), and `minSuccessfulRequestsPerSecond`.
+  `p95Ms`, `p99Ms` (at least p95), `minSuccessfulRequestsPerSecond`, and a positive integer `minMeasuredRequests`.
 
 The target commit must be later than baseline completion and earlier than the acceptance run. Git
 history must be available. Missing/untracked/altered targets, missing baseline, incorrect hashes,
-wrong source ancestry, changed workload, empty cells and invalid statistics block/fail the gate.
+wrong source ancestry, changed workload, empty cells, insufficient measured samples and invalid statistics block/fail the gate.
 The target file hash is rechecked after execution. A reviewer identity field is provenance to review,
 not cryptographic proof of owner approval and not permission to close the milestone automatically.
 

@@ -1,6 +1,6 @@
 # Implementation/baseline verification is intentionally separate from owner acceptance.
 [CmdletBinding()]
-param([ValidateSet('Baseline','Acceptance')][string]$Mode='Baseline', [string]$Targets)
+param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode='Baseline', [string]$Targets)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$false
@@ -12,7 +12,7 @@ $runId=[DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')+'-'+[guid]::NewG
 $run=Join-Path $root "artifacts/m7-runs/$runId"
 [void][IO.Directory]::CreateDirectory($run)
 $commands=[Collections.Generic.List[object]]::new()
-$report=[ordered]@{schemaVersion=1;mode=$Mode;status='FAIL';sourceSha=$null;sourceClean=$false;startedUtc=[DateTimeOffset]::UtcNow;completedUtc=$null;commands=$commands;acceptance='NOT_ASSESSED';ownerReview='PENDING';exitCode=1}
+$report=[ordered]@{schemaVersion=1;mode=$Mode;status='FAIL';sourceSha=$null;sourceClean=$false;sourceCleanAfter=$false;inheritedFullRequired=($Mode -eq 'Acceptance');inheritedFullStatus='NOT_RUN';startedUtc=[DateTimeOffset]::UtcNow;completedUtc=$null;commands=$commands;acceptance='NOT_ASSESSED';ownerReview='PENDING';exitCode=1}
 $code=1; $lock=$null; $targetValue=$null; $targetPath=$null; $targetHash=$null
 $knownSecrets=@(Get-ChildItem Env: | Where-Object { $_.Name -match '^(SAAS_|MSSQL_)' -and $_.Name -notmatch '(SOURCE_SHA|EVIDENCE_DIRECTORY)$' -and $_.Value.Length -ge 8 } | ForEach-Object Value)
 function Protect-RunText([string]$Text) {
@@ -63,12 +63,19 @@ try {
     $dirty=@(& git status --porcelain=v1 --untracked-files=all)
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) { throw 'BLOCKED:clean_checkout_required' }
     $report.sourceClean=$true
-    if ($Mode -eq 'Acceptance') {
+    if ($Mode -ne 'Baseline') {
         if ([string]::IsNullOrWhiteSpace($Targets)) { throw 'BLOCKED:reviewed_precommitted_targets_required' }
         $targetPath=Require-TrackedPath $Targets
         $targetHash=(Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
         $targetValue=Get-Content -LiteralPath $targetPath -Raw | ConvertFrom-Json
-        Assert-M7Targets $targetValue
+        Assert-M7TargetDefinition $targetValue
+        if ($Mode -eq 'Acceptance') {
+            try { Assert-M7Targets $targetValue }
+            catch {
+                if ($_.Exception.Message -ceq 'm7_targets_not_owner_approved') { throw 'BLOCKED:owner_approved_targets_required' }
+                throw
+            }
+        } else { $report.acceptance='CANDIDATE_ONLY_NOT_ACCEPTANCE' }
         $baselinePath=Require-TrackedPath $targetValue.baseline.reportPath
         if ((Get-FileHash -LiteralPath $baselinePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetValue.baseline.reportSha256) { throw 'm7_baseline_hash_mismatch' }
         $baseline=Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
@@ -80,23 +87,28 @@ try {
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($lockedAt)) { throw 'BLOCKED:target_commit_time_missing' }
         Assert-M7TargetTiming ([DateTimeOffset]$baseline.completedUtc) ([DateTimeOffset]$lockedAt) $report.startedUtc
         if ((Get-FileHash -LiteralPath tests/Load/m7-baseline.json -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetValue.loadConfigSha256) { throw 'm7_load_configuration_changed' }
-        $report.targets=[ordered]@{path=$Targets;sha256=$targetHash;committedUtc=$lockedAt;baselineSha=$baseline.sourceSha;decisionReference=$targetValue.decisionReference}
+        $report.targets=[ordered]@{path=$Targets;sha256=$targetHash;committedUtc=$lockedAt;baselineSha=$baseline.sourceSha;decisionReference=$targetValue.decisionReference;reviewStatus=$targetValue.reviewStatus;reviewedBy=$targetValue.reviewedBy}
         Copy-M7Text $targetPath 'targets.json'
-        $beforeFull=@(Get-ChildItem artifacts/local-verify -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
-        # Full inherited M0-M6 evidence is mandatory at this exact source, not a prior green SHA.
-        Invoke-M7Gate 'inherited-full' @('scripts/local-verify.ps1','-Scope','Full')
-        $inherited=@(Get-ChildItem artifacts/local-verify -Directory | Where-Object { $_.Name -notin $beforeFull })
-        if ($inherited.Count -ne 1) { throw 'm7_inherited_evidence_missing_or_ambiguous' }
-        $summary=Join-Path $inherited[0].FullName 'summary.json'
-        $prior=Get-Content -LiteralPath $summary -Raw | ConvertFrom-Json
-        if ($prior.sourceSha -cne $report.sourceSha -or $prior.status -cne 'PASS' -or $prior.exitCode -ne 0) { throw 'm7_inherited_evidence_mismatch' }
-        Copy-M7Text $summary 'inherited-full.json'
-        $inheritedZip=$inherited[0].FullName+'.zip'
-        if (-not (Test-Path -LiteralPath $inheritedZip)) { throw 'm7_inherited_package_missing' }
-        [IO.File]::Copy($inheritedZip,(Join-Path $run 'inherited-full.zip'))
-    } elseif (-not [string]::IsNullOrWhiteSpace($Targets)) { throw 'm7_targets_only_apply_to_acceptance_mode' }
+        Copy-M7Text $baselinePath 'baseline/load.json'
+        if ($Mode -eq 'Acceptance') {
+            $beforeFull=@(Get-ChildItem artifacts/local-verify -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
+            # Full inherited M0-M6 evidence is mandatory at this exact source, not a prior green SHA.
+            Invoke-M7Gate 'inherited-full' @('scripts/local-verify.ps1','-Scope','Full')
+            $inherited=@(Get-ChildItem artifacts/local-verify -Directory | Where-Object { $_.Name -notin $beforeFull })
+            if ($inherited.Count -ne 1) { throw 'm7_inherited_evidence_missing_or_ambiguous' }
+            $summary=Join-Path $inherited[0].FullName 'summary.json'
+            $prior=Get-Content -LiteralPath $summary -Raw | ConvertFrom-Json
+            if ($prior.sourceSha -cne $report.sourceSha -or $prior.status -cne 'PASS' -or $prior.exitCode -ne 0) { throw 'm7_inherited_evidence_mismatch' }
+            Copy-M7Text $summary 'inherited-full.json'
+            $inheritedZip=$inherited[0].FullName+'.zip'
+            if (-not (Test-Path -LiteralPath $inheritedZip)) { throw 'm7_inherited_package_missing' }
+            [IO.File]::Copy($inheritedZip,(Join-Path $run 'inherited-full.zip'))
+            $report.inheritedFullStatus='PASS'
+        }
+    } elseif (-not [string]::IsNullOrWhiteSpace($Targets)) { throw 'm7_targets_not_allowed_in_baseline_mode' }
     Invoke-M7Gate 'syntax' @('scripts/check-powershell-syntax.ps1')
     Invoke-M7Gate 'evidence-policy' @('scripts/test-m7-evidence.ps1')
+    Invoke-M7Gate 'target-policy' @('scripts/test-m7-target-readiness.ps1')
     Invoke-M7Gate 'm0' @('scripts/check.ps1','-Scope','M0')
     Copy-M7Text (Join-Path $root 'artifacts/verification/m0.json') 'm0.json'
     foreach ($trx in Get-ChildItem artifacts/test-results/m0 -Filter *.trx -File) { Copy-M7Text $trx.FullName ('m0/'+$trx.Name) }
@@ -113,12 +125,29 @@ try {
     }
     $load=Get-Content (Join-Path $root 'artifacts/m7/evidence/load.json') -Raw | ConvertFrom-Json
     Assert-M7LoadReport $load $report.sourceSha
-    if ($Mode -eq 'Acceptance') {
-        if ((Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetHash) { throw 'm7_targets_changed_during_run' }
-        Assert-M7Thresholds $load $targetValue
-        $report.acceptance='TECHNICAL_GATES_PASSED_OWNER_REVIEW_REQUIRED'
-    } else { $report.acceptance='BASELINE_ONLY_TARGETS_NOT_ASSESSED' }
+    if ($load.mode -cne $Mode) { throw 'm7_report_mode_mismatch' }
     if ((Get-M6Sha) -cne $report.sourceSha -or @(& git status --porcelain=v1 --untracked-files=all).Count -ne 0) { throw 'm7_source_changed_during_run' }
+    $report.sourceCleanAfter=$true
+    if ($Mode -ne 'Baseline') {
+        if ((Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetHash) { throw 'm7_targets_changed_during_run' }
+        $assessment=Get-M7TargetAssessment $load $targetValue
+        $assessment.mode=$Mode
+        $assessment.targetSha256=$targetHash
+        $assessment.targetPath=$Targets
+        $assessment.targetCommittedUtc=$report.targets.committedUtc
+        $assessment.baselineSourceSha=$targetValue.baseline.sourceSha
+        # Retain ALL metric/cell failures before making the process fail.
+        Write-M6Json (Join-Path $run 'thresholds.json') $assessment
+        $report.thresholds=[ordered]@{status=$assessment.status;failedCells=$assessment.failedCells;failedMetrics=$assessment.failedMetrics}
+        if ($assessment.status -cne 'PASS') {
+            $report.acceptance=$(if ($Mode -eq 'Candidate') { 'CANDIDATE_TARGETS_FAILED_NOT_ACCEPTANCE' } else { 'TARGETS_FAILED' })
+            throw "m7_threshold_failed:$($assessment.failedCells)_cells:$($assessment.failedMetrics)_metrics"
+        }
+        if ($Mode -eq 'Acceptance') {
+            Assert-M7Thresholds $load $targetValue
+            $report.acceptance='TECHNICAL_GATES_PASSED_OWNER_REVIEW_REQUIRED'
+        } else { $report.acceptance='CANDIDATE_TARGETS_PASSED_NOT_ACCEPTANCE' }
+    } else { $report.acceptance='BASELINE_ONLY_TARGETS_NOT_ASSESSED' }
     $report.status='PASS'; $code=0
 } catch {
     $report.error=Protect-RunText $_.Exception.Message

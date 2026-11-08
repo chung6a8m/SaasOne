@@ -20,9 +20,9 @@ function New-Report {
 }
 function New-Targets {
     return @{
-        schemaVersion=1; loadConfigSha256=('b'*64); reviewedBy='test fixture'; decisionReference='test-only'; maxUnexpectedErrors=0
+        schemaVersion=1; loadConfigSha256=('b'*64); reviewStatus='Approved'; reviewedBy='test fixture'; decisionReference='test-only'; maxUnexpectedErrors=0
         baseline=@{sourceSha=$sha;reportSha256=('c'*64);reportPath='tests/Load/baselines/fixture.json';artifactReference='test-only'}
-        limits=@(Get-M7Cells | ForEach-Object { $parts=$_.Split('/'); @{tenant=$parts[0];operation=$parts[1];p95Ms=30.0;p99Ms=40.0;minSuccessfulRequestsPerSecond=0.01} })
+        limits=@(Get-M7Cells | ForEach-Object { $parts=$_.Split('/'); @{tenant=$parts[0];operation=$parts[1];p95Ms=30.0;p99Ms=40.0;minSuccessfulRequestsPerSecond=0.01;minMeasuredRequests=1} })
     }
 }
 $script:count=0

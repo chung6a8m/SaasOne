@@ -77,4 +77,35 @@ $baseline=Get-Content -LiteralPath (Join-Path $root $proposal.baseline.reportPat
 $a=Get-M7TargetAssessment $baseline $proposal
 if ($a.status -cne 'FAIL' -or $a.failedCells -ne 22 -or $a.acceptance -cne 'NOT_GRANTED') { throw 'Historical slow baseline must not pass the new engineering proposal.' }
 $script:cases++
+# Exercise the real entry point on a disposable clean Git checkout. Only the
+# approval preflight may run; the deliberately absent baseline prevents a faulty
+# implementation from reaching SQL/build work. This never alters the real repo.
+$fixture=Join-Path ([IO.Path]::GetTempPath()) ('m7-approval-[literal]-'+[guid]::NewGuid().ToString('N'))
+$log=$fixture+'.log'
+try {
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    foreach ($name in @('check-m7.ps1','m6-common.ps1','m7-evidence-policy.ps1','m7-evidence-package.ps1')) {
+        [IO.File]::Copy((Join-Path $PSScriptRoot $name),(Join-Path $fixture "scripts/$name"))
+    }
+    [IO.File]::WriteAllText((Join-Path $fixture '.gitignore'), "artifacts/`n")
+    $t=New-ReadyTargets; $t.reviewStatus='Proposed'
+    [IO.File]::WriteAllText((Join-Path $fixture 'targets.json'),($t | ConvertTo-Json -Depth 20))
+    & git -C $fixture init -q
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture git init failed.' }
+    & git -C $fixture add .
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture git add failed.' }
+    & git -C $fixture -c user.name=M7Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm 'Synthetic approval preflight fixture'
+    if ($LASTEXITCODE -ne 0) { throw 'Fixture git commit failed.' }
+    & pwsh -NoProfile -File (Join-Path $fixture 'scripts/check-m7.ps1') -Mode Acceptance -Targets targets.json *> $log
+    $code=$LASTEXITCODE
+    $runs=@(Get-ChildItem -LiteralPath (Join-Path $fixture 'artifacts/m7-runs') -Directory)
+    if ($code -ne 2 -or $runs.Count -ne 1) { throw 'Unapproved entry point must return BLOCKED exit 2 with one evidence bundle.' }
+    $blocked=Get-Content -LiteralPath (Join-Path $runs[0].FullName 'verification.json') -Raw | ConvertFrom-Json
+    if ($blocked.status -cne 'BLOCKED' -or $blocked.error -cne 'BLOCKED:owner_approved_targets_required' -or $blocked.commands.Count -ne 0 -or $blocked.ownerReview -cne 'PENDING') { throw 'Acceptance must block before any expensive gate, without fabricating approval.' }
+    if (-not (Test-Path -LiteralPath ($runs[0].FullName+'.zip'))) { throw 'Blocked entry point must still package evidence.' }
+    $script:cases++
+} finally {
+    if ([IO.Directory]::Exists($fixture)) { [IO.Directory]::Delete($fixture,$true) }
+    if ([IO.File]::Exists($log)) { [IO.File]::Delete($log) }
+}
 Write-Host "PASS: M7 target readiness ($script:cases behavioral cases). Synthetic inputs and historical assessments are not fresh acceptance evidence."

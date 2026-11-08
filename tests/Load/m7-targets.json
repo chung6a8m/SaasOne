@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "reviewStatus": "Proposed",
+  "reviewedBy": null,
+  "proposedBy": "ChatGPT engineering proposal under the project continuation request; not owner or independent reviewer approval",
+  "decisionReference": "docs/decisions/m7-performance-targets.md",
+  "loadConfigSha256": "694f09001e4ba2b40ba4ed07f93786daa8cb8fc0baaf7eaa9753507415f86adc",
+  "baseline": {
+    "sourceSha": "443e9ac2f0a51022de550437957f94a1e7dc6c23",
+    "reportPath": "tests/Load/baselines/443e9ac2.load.json",
+    "reportSha256": "97e9ae342ef8d2ac3d01c3b2cc7a508c1bcc35788c6fd57bdddb42187360b431",
+    "artifactReference": "github:chung6a8m/SaasOne/actions/runs/42496484263/artifacts/13622894577; outer-sha256:d48578491ca71c979d79efbd33d8674500b9cd7b1adfe67574186e1711bf5308"
+  },
+  "maxUnexpectedErrors": 0,
+  "limits": [
+    {"tenant":"alpha","operation":"create","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"alpha","operation":"edit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"alpha","operation":"submit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"alpha","operation":"detail","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"alpha","operation":"list","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"beta","operation":"create","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"beta","operation":"edit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"beta","operation":"submit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"beta","operation":"detail","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"beta","operation":"list","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"beta","operation":"approve","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"gamma","operation":"create","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"gamma","operation":"edit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"gamma","operation":"submit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"gamma","operation":"detail","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"gamma","operation":"list","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"gamma","operation":"approve","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"delta","operation":"create","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"delta","operation":"edit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"delta","operation":"submit","p95Ms":2000,"p99Ms":4000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"delta","operation":"detail","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100},
+    {"tenant":"delta","operation":"list","p95Ms":1000,"p99Ms":2000,"minSuccessfulRequestsPerSecond":1.0,"minMeasuredRequests":100}
+  ]
+}
