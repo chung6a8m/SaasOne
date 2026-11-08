@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-      - name: Archive tracked source only, without credentials or local state
+      - name: Archive tracked source only
         shell: bash
         run: |
           set -euo pipefail
@@ -53,10 +53,29 @@ jobs:
         run: |
           dotnet test tests/Architecture/SaaS.ArchitectureTests/SaaS.ArchitectureTests.csproj --configuration Release --no-build --filter FullyQualifiedName~M7ProductSourceTests --logger trx --results-directory artifacts/test-results/m7-contracts
           exit $LASTEXITCODE
+      - name: Generate initial product locks for review (not acceptance)
+        shell: pwsh
+        run: |
+          dotnet restore samples/Portal/SaaS.Portal.csproj --force-evaluate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/check-powershell-syntax.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/check-m7-product.ps1
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
           name: m7-contracts-${{ github.sha }}-${{ github.run_attempt }}
-          path: artifacts/test-results/m7-contracts/
+          path: |
+            artifacts/test-results/m7-contracts/
+            artifacts/m7/product/*.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m7-initial-locks-${{ github.sha }}
+          path: |
+            samples/Portal/packages.lock.json
+            samples/Portal.Theme/packages.lock.json
           if-no-files-found: error
           retention-days: 7
