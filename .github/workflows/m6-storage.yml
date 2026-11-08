@@ -57,6 +57,11 @@ jobs:
         run: |
           pwsh -NoProfile -File scripts/m6-storage-drill.ps1 -DisposableHostAcknowledged
           exit $LASTEXITCODE
+      - name: Evidence redaction and ZIP regression tests
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/test-m6-evidence.ps1
+          exit $LASTEXITCODE
       - name: Secret-free marker writer regression
         if: always()
         shell: pwsh
@@ -70,5 +75,6 @@ jobs:
           path: |
             artifacts/verification/m6-storage-drill.json
             artifacts/verification/m6-storage-drill.json.sha256
+            artifacts/verification/m6-evidence-self-tests.json
           if-no-files-found: error
           retention-days: 7
