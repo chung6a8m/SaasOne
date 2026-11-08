@@ -84,3 +84,22 @@ After SQL overwrite, immutable TenantId/database nonce must match **before** EF 
 Successful physical restore still returns **Restoring + SecurityRevalidationRequired**. Review and explicitly approve the full current ACL through the existing `ops-recovery-approve` / recovery-authority workflow, then `ops-recovery-resume`. Never copy the restored historical ACL into approval merely because it is present in the backup. The current platform authority and membership checks remain mandatory. An outstanding restored approval under Standard requires separately authorized `AllowApprovalUpgrade=true`; the child upgrade does not open traffic until all restore/security checks complete. Use the ordinary approval workflow on the restored order revision afterward.
 
 See the M3 recovery runbook for exact ACL approval arguments. Do not manually clear `SecurityRevalidationRequired`, edit an operation checkpoint, delete an intent/audit row, or reset a write gate to force readiness. Suspension, expiry and pending deletion remain authoritative. A physical restore with a lifecycle conflict needs explicit reconciliation, not an automatic retry against a new version.
+
+## Approved replacement recovery point after a refused Approval upgrade
+
+When a verified restore brings back outstanding approvals under the current Standard plan and the current authority has **not** approved the Approval child upgrade, do **not** edit the original BackupId, retry it with another manifest, reset Restoring, or clear the gate manually. A separate source-supersede operation is allowed only while the old physical identity is verified, the write gate is closed, no ACL apply has started, the subscription is Active/unexpired, and an enabled current-platform recovery authority explicitly accepts the data-loss scope.
+
+Prepare a private JSON decision file (do not place the justification in command-line arguments):
+
+~~~json
+{"lossScope":"Orders and changes after the selected older full backup will be discarded","reason":"Reviewed and approved by the current platform recovery authority"}
+~~~
+
+~~~powershell
+dotnet ./src/SaaS.Web/bin/Release/net10.0/SaaS.Web.dll --maintenance restore-backup-supersede $tenantId $priorRestoreOperationId $newRestoreOperationId $expectedRegistryVersion $replacementBackupId ./private/supersede-decision.json $newReportPath
+# Read RegistryVersion from the returned PENDING_PHYSICAL_RESTORE report:
+dotnet ./src/SaaS.Web/bin/Release/net10.0/SaaS.Web.dll --maintenance restore-backup-resume $tenantId $newRestoreOperationId $returnedRegistryVersion $replacementBackupId $secondReportPath
+~~~
+
+The supersede transaction makes the old operation terminal as **superseded**, never successful; increments RegistryVersion/fence and security generations; revokes remaining sessions/families; audits old/new backup hashes plus the approval and loss scope; and persists the new physical-restore source intent atomically. It **does not restore SQL or open traffic**. The replacement must pass the pre-overwrite HMAC/SQL/layout checks and post-overwrite tenant identity check. A normal restore retry remains bound to its original immutable source. Once the replacement physical restore is verified, approve a fresh ACL from current platform authority and complete the recovery with the **new** operation ID. Failure or missing authorization keeps the tenant closed.
+

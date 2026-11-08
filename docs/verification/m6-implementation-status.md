@@ -1,18 +1,18 @@
 # M6 implementation and verification status
 
-Status: **candidate implementation; NOT accepted, NOT production-ready**. Baseline: `a3de8981cd7033b31e3768c199891c4d25ef2fa8`. CI is intentionally unchanged. Source review is not runtime evidence.
+Status: **candidate implementation; NOT accepted, NOT production-ready**. Baseline: `a3de8981cd7033b31e3768c199891c4d25ef2fa8`. CI now runs a dedicated M6 full-acceptance workflow; only fresh results for the reviewed SHA count as runtime evidence.
 
 ## Implemented source
 
 The host composes six release streams, external EF bundles, idempotent SQL, immutable manifests and real Orchard verification. Tenant release/backup/restore reuse the common locks, registry CAS/fences, write gate and current-platform authorization. The platform constraint migration enables the existing Migrating operation kind; no historical migration is rewritten. Physical restore has durable source intent before the security claim, immutable source binding and identity verification before any migration/ACL work. Generic recovery cannot bypass an incomplete physical restore.
 
-Local verification provides a single entry point, isolated evidence directories, exact source/tool versions, inherited M0–M5 gates, mandatory-case validation, release packaging, real SQL fixtures, sanitized reports/TRX and a checksummed ZIP, including failed runs. CI is not enabled by these scripts.
+Local verification provides a single entry point, isolated evidence directories, exact source/tool versions, inherited M0–M5 gates, mandatory-case validation, release packaging, real SQL fixtures, sanitized reports/TRX and a checksummed ZIP, including failed runs. M6 CI calls the full local verification entrypoint; no older milestone checks alone imply M6 acceptance.
 
 ## Execution evidence in the authoring environment
 
 `dotnet`, `pwsh`, Docker and SQL Server are absent. Attempts to execute the test commands cannot start (shell exit 127). Consequently restore/build, PowerShell parsing, component tests, EF model-drift checks, bundle execution, inherited integration gates and all M6 SQL/HTTP tests are **NOT RUN / BLOCKED**, not PASS. No generated release binaries, TRX or acceptance result is asserted or checked in.
 
-The source inventory contains six M6 component facts and thirteen SqlM6 facts; several facts loop through independent failure/lifecycle cases. Exact names are checked into `scripts/m6-policy-cases.json` and `scripts/m6-mandatory-cases.json`. Written tests are not executed evidence. The local full gate must discover each mandatory fact exactly once and pass it without skips.
+The source inventory contains six M6 component facts and fourteen SqlM6 facts; several facts loop through independent failure/lifecycle cases. Exact names are checked into `scripts/m6-policy-cases.json` and `scripts/m6-mandatory-cases.json`. Written tests are not executed evidence. The local full gate must discover each mandatory fact exactly once and pass it without skips.
 
 ## Coverage and remaining acceptance work
 
@@ -21,7 +21,7 @@ The source inventory contains six M6 component facts and thirteen SqlM6 facts; s
 | Artifact trust | HMAC/tenant/chain/path/context/hash negative cases; pre-execution host verification | Component and PowerShell self-test results |
 | EF release | All six actual bundles, empty databases, previous migration baseline, repeat execution | SQL TRX, manifest, SQL, model-drift results |
 | Tenant release | Actual native verification, seven failure checkpoints, independent tenant progress, lifecycle conflicts | Real SQL/HTTP fixture results |
-| Physical restore | Real COPY_ONLY backup, cross-tenant/tamper rejection, durable intent and physical checkpoint retries | Real SQL restore results and external audit/state evidence |
+| Physical restore | Real COPY_ONLY backup, cross-tenant/tamper rejection, durable intent, physical retries and approved alternate source while closed | Real SQL restore results and external audit/state evidence |
 | Security recovery | Current full ACL, active membership, removed role assignment/permission or Deny, old access token/cookie rejection and fresh-login denial | HTTP results, current-platform authority review |
 | Restored obligation | PendingApproval backup → approve → Standard → restore → explicit child upgrade → normal approval | Actual workflow results |
 

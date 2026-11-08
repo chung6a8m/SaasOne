@@ -1,6 +1,6 @@
 # M6 — Controlled release and local verification
 
-Status: **source candidate implemented; runtime verification and owner review pending**. Baseline: `a3de8981cd7033b31e3768c199891c4d25ef2fa8`. Specification: roadmap revision 1.3, M6 and §§5.3–5.6, ADRs 0003–0005. CI remains disabled/unchanged; do not equate a source commit with acceptance evidence.
+Status: **source candidate implemented; runtime verification and owner review pending**. Baseline: `a3de8981cd7033b31e3768c199891c4d25ef2fa8`. Specification: roadmap revision 1.3, M6 and §§5.3–5.6, ADRs 0003–0005. A dedicated M6 CI full-acceptance workflow now runs; do not equate a source commit with acceptance evidence.
 
 ## Design
 

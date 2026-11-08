@@ -1,0 +1,35 @@
+name: M6 controlled release and physical restore acceptance
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m6-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Full M0-M6 migration, SQL restore, release and evidence verification
+        shell: pwsh
+        run: |
+          ./scripts/local-verify.ps1 -Scope Full
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m6-verification-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/local-verify/*.zip
+            artifacts/local-verify/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 7

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using SaaS.Abstractions.Tenancy;
 using SaaS.Tenancy.Data;
+using SaaS.Tenancy.Operations;
 using SaaS.Tenancy.Release;
 using SaaS.Web.Access;
 using SaaS.Web.Release;
@@ -11,7 +12,7 @@ internal static class M6MaintenanceCommand
 {
     public static bool Handles(string command) => command is "release-catalog" or "release-check" or "release-apply" or "release-resume"
         or "release-verify" or "platform-release" or "platform-release-resume" or "backup" or "backup-resume"
-        or "restore-backup" or "restore-backup-resume";
+        or "restore-backup" or "restore-backup-resume" or "restore-backup-supersede";
     public static async Task ExecuteAsync(string[] args, CancellationToken ct)
     {
         var connections = new TenancyConnections();
@@ -44,6 +45,24 @@ internal static class M6MaintenanceCommand
             && restoreAction is "restore-backup" or "restore-backup-resume")
             await WriteAsync(report, await operations.RestoreBackupAsync(Id(restoreTenant), Id(operation), Version(expected), Id(backupId), store,
                 restoreAction == "restore-backup-resume", ct), ct);
+        else if (args is ["restore-backup-supersede", var sourceTenant, var priorOperation, var newOperation,
+                 var sourceVersion, var newBackup, var decisionFile, var supersedeReport])
+        {
+            var file = new FileInfo(Path.GetFullPath(decisionFile));
+            if (!file.Exists || file.Length is < 1 or > 8192)
+                throw new TenantContractException("recovery_supersede_decision_invalid");
+            RestoreSupersedeDecision decision;
+            try
+            {
+                decision = JsonSerializer.Deserialize<RestoreSupersedeDecision>(
+                    await File.ReadAllBytesAsync(file.FullName, ct), ReleasePackage.Json)
+                    ?? throw new JsonException();
+            }
+            catch (JsonException) { throw new TenantContractException("recovery_supersede_decision_invalid"); }
+            await WriteAsync(supersedeReport, await operations.SupersedeRecoverySourceAsync(
+                Id(sourceTenant), Id(priorOperation), Id(newOperation), Version(sourceVersion),
+                Id(newBackup), store, decision, ct), ct);
+        }
         else throw new TenantContractException("invalid_maintenance_command");
     }
     private static Guid Id(string text) => Guid.TryParseExact(text, "D", out var value) && value != Guid.Empty
