@@ -1,0 +1,9 @@
+[
+  "SaaS.UnitTests.M7SqlAcceptanceTests.Four_active_tenants_isolate_same_number_data_and_all_cross_token_routes",
+  "SaaS.UnitTests.M7SqlAcceptanceTests.Shared_user_roles_deny_and_missing_memberships_remain_tenant_specific",
+  "SaaS.UnitTests.M7SqlAcceptanceTests.Native_UI_two_tabs_keep_prefix_data_and_policy_consistent_with_API",
+  "SaaS.UnitTests.M7SqlAcceptanceTests.Concurrent_updates_and_approvals_have_one_winner_and_replay_one_audit",
+  "SaaS.UnitTests.M7SqlAcceptanceTests.Delta_lifecycle_is_separate_and_does_not_revoke_other_tenants",
+  "SaaS.UnitTests.M7SqlAcceptanceTests.Published_independent_product_uses_runtime_only_and_fails_closed",
+  "SaaS.UnitTests.M7SqlAcceptanceTests.Hundred_virtual_users_report_nonempty_read_write_approval_baseline"
+]

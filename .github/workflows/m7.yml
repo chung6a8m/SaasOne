@@ -35,7 +35,7 @@ jobs:
           retention-days: 7
   product-contracts:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -48,10 +48,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet build SaasOne.slnx --configuration Release --no-restore
           exit $LASTEXITCODE
-      - name: Independent product source contract
+      - name: Independent product and metrics contracts
         shell: pwsh
         run: |
-          dotnet test tests/Architecture/SaaS.ArchitectureTests/SaaS.ArchitectureTests.csproj --configuration Release --no-build --filter FullyQualifiedName~M7ProductSourceTests --logger trx --results-directory artifacts/test-results/m7-contracts
+          dotnet test SaasOne.slnx --configuration Release --no-build --filter 'FullyQualifiedName~M7ProductSourceTests|FullyQualifiedName~M7MetricTests' --logger trx --results-directory artifacts/test-results/m7-contracts
           exit $LASTEXITCODE
       - name: Generate initial product locks for review (not acceptance)
         shell: pwsh
@@ -61,21 +61,59 @@ jobs:
           ./scripts/check-powershell-syntax.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/check-m7-product.ps1
+      - name: Real SQL four-tenant correctness and load development run
+        shell: pwsh
+        run: |
+          ./scripts/m7-sql-fixture.ps1 -Mode Baseline
+          exit $LASTEXITCODE
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
-          name: m7-contracts-${{ github.sha }}-${{ github.run_attempt }}
+          name: m7-development-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             artifacts/test-results/m7-contracts/
             artifacts/m7/product/*.json
+            artifacts/m7/evidence/
           if-no-files-found: error
           retention-days: 7
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        if: always()
+  initial-lock-objects:
+    # One-time import of already reviewed generated locks. This job only creates
+    # immutable blobs, never commits or moves a ref, and is removed after import.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/m7-acceptance-reuse'
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          name: m7-initial-locks-${{ github.sha }}
-          path: |
-            samples/Portal/packages.lock.json
-            samples/Portal.Theme/packages.lock.json
-          if-no-files-found: error
-          retention-days: 7
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Reproduce the reviewed lock bytes
+        shell: pwsh
+        run: |
+          dotnet restore samples/Portal/SaaS.Portal.csproj --force-evaluate
+          exit $LASTEXITCODE
+      - name: Import exact lock blobs without modifying any branch
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          import base64, hashlib, json, os, pathlib, urllib.request
+          expected = {
+              'samples/Portal/packages.lock.json': '733c70013a5cd75ef928f4ae58e5a7a523bc2c4e',
+              'samples/Portal.Theme/packages.lock.json': '7e5803303206233a3009874699fda473fc7ec08e'
+          }
+          for path, digest in expected.items():
+              data = pathlib.Path(path).read_bytes()
+              actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              if actual != digest:
+                  raise SystemExit('Generated lock bytes differ from the reviewed artifact.')
+              body = json.dumps({'content': base64.b64encode(data).decode(), 'encoding': 'base64'}).encode()
+              request = urllib.request.Request('https://api.github.com/repos/chung6a8m/SaasOne/git/blobs', data=body,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'}, method='POST')
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  result = json.load(response)
+              if result.get('sha') != digest:
+                  raise SystemExit('Imported blob hash mismatch.')
+              print(path + ' ' + digest)

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "virtualUsersPerTenant": 25,
+  "rampSeconds": 30,
+  "measureSeconds": 60,
+  "thinkMilliseconds": 250
+}
