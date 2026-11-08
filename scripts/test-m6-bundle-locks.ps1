@@ -14,6 +14,9 @@ $badExtra = '{"version":2,"dependencies":{"net10.0":{"Example":{"type":"Direct",
 if (-not (Test-M6RidLockDelta $baseline $valid 'win-x64')) {
     throw 'valid_rid_only_lock_change_rejected'
 }
+if (-not (Test-M6RidLockDelta $baseline $valid.Replace('/win-x64', '/linux-x64') 'linux-x64')) {
+    throw 'valid_linux_rid_only_lock_change_rejected'
+}
 foreach ($case in @(
     @{ name = 'base_package_changed'; value = $badBase },
     @{ name = 'wrong_target_rid'; value = $badRid },
@@ -25,4 +28,4 @@ foreach ($case in @(
     catch { $blocked = $true }
     if (-not $blocked) { throw ('lock_regression_not_rejected:' + $case.name) }
 }
-Write-Host 'PASS: five RID lock-drift validation scenarios.'
+Write-Host 'PASS: six RID lock-drift validation scenarios.'
