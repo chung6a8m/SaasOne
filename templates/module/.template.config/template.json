@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "SaasOne",
+  "classifications": ["SaaS", "Module"],
+  "identity": "SaasOne.Module",
+  "name": "SaasOne dependency-safe module",
+  "shortName": "saas-module",
+  "sourceName": "SaaS.Module.Template",
+  "preferNameDirectory": true,
+  "tags": { "language": "C#", "type": "project" }
+}

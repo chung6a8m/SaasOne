@@ -30,7 +30,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
     private readonly ConcurrentQueue<string> _failures = new();
     private readonly Stopwatch _watch = new();
     private int _activeUsers, _peakUsers, _activeRequests, _peakRequests;
-    private readonly string _prefix = "M7LOAD-" + Guid.NewGuid().ToString("N")[..10] + "-";
+    private readonly string _prefix = ("M7LOAD-" + Guid.NewGuid().ToString("N")[..10] + "-").ToUpperInvariant();
     private static readonly string[] Slugs = ["alpha", "beta", "gamma", "delta"];
     private double End => config.RampSeconds + config.MeasureSeconds;
 
@@ -115,6 +115,9 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
         });
         Assert.True(valid, "M7 load failed correctness, error, population or mandatory metric coverage; inspect sanitized load.json and samples.");
     }
+    internal static string DraftNumber(string prefix, string slug, int index, int sequence) =>
+        (prefix + slug + "-" + index + "-" + sequence).ToUpperInvariant();
+
     private async Task UserAsync(string slug, int index, string token, string? reviewer, CancellationToken ct)
     {
         await Task.Delay(TimeSpan.FromSeconds(config.RampSeconds * index / (double)(config.VirtualUsersPerTenant - 1)), ct);
@@ -125,7 +128,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config)
         {
             while (_watch.Elapsed.TotalSeconds < End && !ct.IsCancellationRequested)
             {
-                var draft = new OrderDraft(_prefix + slug + "-" + index + "-" + sequence++, "Load customer " + slug, 42m, "USD", "Disposable M7 load");
+                var draft = new OrderDraft(DraftNumber(_prefix, slug, index, sequence++), "Load customer " + slug, 42m, "USD", "Disposable M7 load");
                 try
                 {
                     var created = await RequestAsync<OrderCommandResult>(slug, "create", token, "", draft, 201,

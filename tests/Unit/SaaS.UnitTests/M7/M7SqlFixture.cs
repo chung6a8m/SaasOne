@@ -108,9 +108,9 @@ public sealed class M7SqlFixture : IAsyncLifetime
     private async Task<M7Actor> EnrollAsync(IdentityInstaller installer, Guid[] memberships)
     {
         var name = "m7" + Guid.NewGuid().ToString("N");
-        var password = "Aa1!" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
-        var id = await installer.EnrollUserAsync(Environment.InstallationId, name, name + "@example.invalid", password, memberships, CancellationToken.None);
-        return new(id, name, password);
+        var oneTimeCredential = "Aa1!" + Convert.ToHexString(RandomNumberGenerator.GetBytes(24));
+        var id = await installer.EnrollUserAsync(Environment.InstallationId, name, name + "@example.invalid", oneTimeCredential, memberships, CancellationToken.None);
+        return new(id, name, oneTimeCredential);
     }
     private async Task SeedAclAsync(TestTenant tenant)
     {
@@ -146,7 +146,6 @@ public sealed class M7SqlFixture : IAsyncLifetime
     private HttpClientHandler Handler(bool cookies) => new()
     {
         AllowAutoRedirect = false, UseCookies = cookies,
-        // Trust only this fixture's ephemeral certificate and exact loopback issuer.
         ServerCertificateCustomValidationCallback = (request, certificate, _, _) =>
             request.RequestUri?.Authority == Origin.Authority && certificate is not null && _signing is not null
             && certificate.RawData.AsSpan().SequenceEqual(_signing.RawData)

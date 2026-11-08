@@ -63,6 +63,7 @@ app.Use(async (context, next) =>
 });
 app.MapGet("/health/ready", () => Results.Json(new { status = "ready" }));
 app.MapGet("/", () => Results.Content(PortalPage.Html, "text/html; charset=utf-8"));
-app.Run(context => { context.Response.StatusCode = 404; return Task.CompletedTask; });
+// Leave unmatched routes to the endpoint pipeline's default 404. A terminal Run
+// middleware here would intercept both mapped endpoints before their execution.
 await app.RunAsync();
 public partial class Program { }

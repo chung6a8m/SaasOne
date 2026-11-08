@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SaasAbstractionsProject Condition="'$(SaasAbstractionsProject)' == ''">../../Platform/SaaS.Abstractions/SaaS.Abstractions.csproj</SaasAbstractionsProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(SaasAbstractionsProject)" />
+  </ItemGroup>
+</Project>
