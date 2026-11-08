@@ -22,6 +22,19 @@ The runner invokes inherited M0–M5 gates, checks M6's exact policy-case invent
 
 Exit codes: `0` = selected scope passed; `1` = failed or invalid evidence; `2` = blocked prerequisite. A child gate may report BLOCKED inside a nonzero full-gate result; inspect `summary.json`, logs and individual reports rather than relying only on the exit code. Owner review remains PENDING even when all automated gates pass.
 
+## EF bundle build preflight (before the long SQL suite)
+
+All six migration streams carry `Microsoft.EntityFrameworkCore.Design` (private development dependency) and an `IDesignTimeDbContextFactory` in their **owning project**. The published `SaaS.Web` host does not need the Design package. For each `dotnet ef` command, `scripts/build-release.ps1` passes that stream's `project` as both `--project` and `--startup-project`. Using `SaaS.Web` as startup triggers the EF Tools missing-Design-package error.
+
+To check all six model-drift commands, bundles and idempotent scripts **without rerunning inherited M0–M5 SQL tests**, run from a clean checkout:
+
+```powershell
+pwsh -NoProfile -File scripts/build-release.ps1
+$LASTEXITCODE  # must be 0
+```
+
+This creates a separate candidate release package under `artifacts/releases` and is **not** M6 runtime acceptance. Only proceed to `scripts/local-verify.ps1 -Scope Full` once the standalone build succeeds; Full builds a fresh package tied to the same source SHA. Do not add `Microsoft.EntityFrameworkCore.Design` to the web deployment merely to work around an incorrect EF startup-project option.
+
 ## SQL image preflight and intermittent registry errors
 
 All M0–M6 SQL fixtures use the same tag `mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04` and pin registry digest `sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718`. Each fixture first queries Docker's local `RepoDigests`. If the exact pinned registry digest exists, it uses the cached image without calling `docker pull`; otherwise, it pulls the tag and verifies the resulting digest **before starting SQL**. A cached tag with a missing/wrong digest fails closed (`BLOCKED:sql_image_digest_mismatch`), not silently accepted. The SQL fixtures also verify SQL Server product version `16.0.4305.5` (M1–M6).
