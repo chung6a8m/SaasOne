@@ -118,7 +118,7 @@ try {
     Invoke-M7Gate 'template' @('scripts/check-m7-template.ps1')
     try { Invoke-M7Gate 'sql' @('scripts/m7-sql-fixture.ps1','-Mode',$Mode) }
     finally {
-        foreach ($name in @('sql.json','matrix.json','product-runtime.json','load.json','load-samples.json','test.log','tests.trx')) {
+        foreach ($name in @('sql.json','matrix.json','product-runtime.json','load.json','load-samples.json','sql-profile.json','test.log','tests.trx')) {
             $file=Join-Path $root "artifacts/m7/evidence/$name"
             if (Test-Path $file) { Copy-M7Text $file "sql/$name" }
         }

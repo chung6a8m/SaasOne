@@ -60,6 +60,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
                 [(await fixture.GrantAsync(fixture.Reviewers[0], slug)).AccessToken, (await fixture.GrantAsync(fixture.Reviewers[1], slug)).AccessToken];
         }));
         await fixture.DemandMatrixAsync(ct);
+        using var sqlProfile = await M7SqlProfileSession.StartAsync(fixture.Environment.Admin, ct);
         using var process = Process.GetCurrentProcess();
         var cpuStart = process.TotalProcessorTime;
         var gcStart = Enumerable.Range(0, 3).Select(GC.CollectionCount).ToArray();
@@ -76,6 +77,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
         var cpuSeconds = (process.TotalProcessorTime - cpuStart).TotalSeconds;
         var gcCollections = Enumerable.Range(0, 3).Select(i => GC.CollectionCount(i) - gcStart[i]).ToArray();
         var peakWorkingSet = process.PeakWorkingSet64;
+        await sqlProfile.CompleteAsync(_samples.Count, CancellationToken.None);
         // Capture process resources before post-load integrity queries, matching the timer.
         var integrity = await VerifyPersistedAsync(CancellationToken.None);
         var samples = _samples.ToArray();
@@ -236,4 +238,3 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
         }
     }
     private sealed class M7LoadFailure : Exception { }
-}
