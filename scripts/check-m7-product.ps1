@@ -36,7 +36,7 @@ try {
     }
     $raw | Set-Content "$out/features.json" -Encoding utf8
     $manifest = @($files | Sort-Object FullName | ForEach-Object {
-        @{ path = [IO.Path]::GetRelativePath("$out/publish", $_.FullName).Replace('\','/'); sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+        @{ path = [IO.Path]::GetRelativePath("$out/publish", $_.FullName).Replace('\','/'); sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
     })
     $report = [ordered]@{ schemaVersion=1; sourceSha=(& git rev-parse HEAD).Trim(); status='PASS'; acceptance='NOT_ASSESSED'; packageCount=$assets.libraries.Count; featureCount=$features.Count; files=$manifest }
     $report | ConvertTo-Json -Depth 10 | Set-Content "$out/report.json" -Encoding utf8

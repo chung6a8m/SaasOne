@@ -6,6 +6,7 @@ $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$false
 . (Join-Path $PSScriptRoot 'm6-common.ps1')
 . (Join-Path $PSScriptRoot 'm7-evidence-policy.ps1')
+. (Join-Path $PSScriptRoot 'm7-evidence-package.ps1')
 $root=Split-Path $PSScriptRoot -Parent
 $runId=[DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')+'-'+[guid]::NewGuid().ToString('N')
 $run=Join-Path $root "artifacts/m7-runs/$runId"
@@ -65,11 +66,11 @@ try {
     if ($Mode -eq 'Acceptance') {
         if ([string]::IsNullOrWhiteSpace($Targets)) { throw 'BLOCKED:reviewed_precommitted_targets_required' }
         $targetPath=Require-TrackedPath $Targets
-        $targetHash=(Get-FileHash $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $targetHash=(Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
         $targetValue=Get-Content -LiteralPath $targetPath -Raw | ConvertFrom-Json
         Assert-M7Targets $targetValue
         $baselinePath=Require-TrackedPath $targetValue.baseline.reportPath
-        if ((Get-FileHash $baselinePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetValue.baseline.reportSha256) { throw 'm7_baseline_hash_mismatch' }
+        if ((Get-FileHash -LiteralPath $baselinePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetValue.baseline.reportSha256) { throw 'm7_baseline_hash_mismatch' }
         $baseline=Get-Content -LiteralPath $baselinePath -Raw | ConvertFrom-Json
         Assert-M7LoadReport $baseline $targetValue.baseline.sourceSha
         if ($baseline.mode -cne 'Baseline' -or $baseline.sourceSha -ceq $report.sourceSha) { throw 'm7_prior_baseline_required' }
@@ -78,7 +79,7 @@ try {
         $lockedAt=(& git log -1 --format=%cI -- $Targets | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($lockedAt)) { throw 'BLOCKED:target_commit_time_missing' }
         Assert-M7TargetTiming ([DateTimeOffset]$baseline.completedUtc) ([DateTimeOffset]$lockedAt) $report.startedUtc
-        if ((Get-FileHash tests/Load/m7-baseline.json -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetValue.loadConfigSha256) { throw 'm7_load_configuration_changed' }
+        if ((Get-FileHash -LiteralPath tests/Load/m7-baseline.json -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetValue.loadConfigSha256) { throw 'm7_load_configuration_changed' }
         $report.targets=[ordered]@{path=$Targets;sha256=$targetHash;committedUtc=$lockedAt;baselineSha=$baseline.sourceSha;decisionReference=$targetValue.decisionReference}
         Copy-M7Text $targetPath 'targets.json'
         $beforeFull=@(Get-ChildItem artifacts/local-verify -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
@@ -113,7 +114,7 @@ try {
     $load=Get-Content (Join-Path $root 'artifacts/m7/evidence/load.json') -Raw | ConvertFrom-Json
     Assert-M7LoadReport $load $report.sourceSha
     if ($Mode -eq 'Acceptance') {
-        if ((Get-FileHash $targetPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetHash) { throw 'm7_targets_changed_during_run' }
+        if ((Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $targetHash) { throw 'm7_targets_changed_during_run' }
         Assert-M7Thresholds $load $targetValue
         $report.acceptance='TECHNICAL_GATES_PASSED_OWNER_REVIEW_REQUIRED'
     } else { $report.acceptance='BASELINE_ONLY_TARGETS_NOT_ASSESSED' }
@@ -127,14 +128,12 @@ try {
     $report.exitCode=$code; $report.completedUtc=[DateTimeOffset]::UtcNow
     try {
         Write-M6Json (Join-Path $run 'verification.json') $report
-        $files=@(Get-ChildItem -LiteralPath $run -Recurse -File | Sort-Object FullName | ForEach-Object {
-            @{path=[IO.Path]::GetRelativePath($run,$_.FullName).Replace('\','/');length=$_.Length;sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
-        })
-        Write-M6Json (Join-Path $run 'hashes.json') @{schemaVersion=1;sourceSha=$report.sourceSha;files=$files}
-        $zip=$run+'.zip'
-        [IO.Compression.ZipFile]::CreateFromDirectory($run,$zip)
-        [IO.File]::WriteAllText($zip+'.sha256',(Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()+"  $runId.zip`n")
-    } catch { Write-Host 'FAIL: M7 evidence packaging failed.'; $code=1 }
+        Write-M7EvidencePackage -Root $run -SourceSha ([string]$report.sourceSha)
+    } catch {
+        # Keep the failure nonzero and expose only a sanitized diagnostic, not raw data.
+        Write-Host (Protect-RunText ('FAIL: M7 evidence packaging failed: '+$_.Exception.Message))
+        $code=1
+    }
     if ($null -ne $lock) { $lock.Dispose() }
     Pop-Location
 }

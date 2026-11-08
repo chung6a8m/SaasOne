@@ -3,6 +3,8 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'm7-evidence-policy.ps1')
+. (Join-Path $PSScriptRoot 'm6-common.ps1')
+. (Join-Path $PSScriptRoot 'm7-evidence-package.ps1')
 $sha='a' * 40
 function New-Report {
     return @{
@@ -58,3 +60,44 @@ Must-Reject 'no preceding baseline' { Assert-M7TargetTiming ([DateTimeOffset]'20
 Must-Reject 'latency threshold exceeded' { $t=New-Targets; $t.limits[0].p95Ms=15.0; Assert-M7Thresholds (New-Report) $t }
 Must-Reject 'throughput threshold missed' { $t=New-Targets; $t.limits[0].minSuccessfulRequestsPerSecond=1.0; Assert-M7Thresholds (New-Report) $t }
 Write-Host "PASS: M7 evidence policy ($script:count negative cases; positive report, threshold and timing cases). Synthetic policy inputs are not load evidence."
+
+# Behavioral regression for the PR-only packaging failure: colliding TRX names can
+# contain [1], which must not match the different file named result1.trx.
+$fixture=[IO.Path]::Combine([IO.Path]::GetTempPath(), 'm7-package-[literal]-'+[guid]::NewGuid().ToString('N'))
+$archive=$null
+try {
+    [void][IO.Directory]::CreateDirectory($fixture)
+    $expected=@{}
+    foreach ($name in @('result[1].trx','result1.trx','nested[2]/report.json')) {
+        $path=[IO.Path]::Combine($fixture,$name)
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+        $bytes=[Text.Encoding]::UTF8.GetBytes('Synthetic fixture only: '+$name)
+        [IO.File]::WriteAllBytes($path,$bytes)
+        $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        $expected[$name]=$digest
+        if ((Get-M7FileDigest $path) -cne $digest) { throw 'm7_literal_path_digest_mismatch' }
+    }
+    Write-M7EvidencePackage -Root $fixture -SourceSha $sha
+    $manifest=Get-Content -LiteralPath (Join-Path $fixture 'hashes.json') -Raw | ConvertFrom-Json
+    if ($manifest.files.Count -ne $expected.Count) { throw 'm7_literal_path_inventory_incomplete' }
+    foreach ($entry in $manifest.files) {
+        if (-not $expected.ContainsKey($entry.path) -or $expected[$entry.path] -cne $entry.sha256) { throw 'm7_literal_path_inventory_wrong_digest' }
+    }
+    $archive=[IO.Compression.ZipFile]::OpenRead($fixture+'.zip')
+    if ($archive.Entries.Count -ne $expected.Count+1) { throw 'm7_literal_path_archive_incomplete' }
+    foreach ($name in $expected.Keys) {
+        $entry=$archive.GetEntry($name)
+        if ($null -eq $entry) { throw 'm7_literal_path_archive_missing_entry' }
+        $stream=$entry.Open()
+        try { $actual=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)).ToLowerInvariant() }
+        finally { $stream.Dispose() }
+        if ($actual -cne $expected[$name]) { throw 'm7_literal_path_archive_wrong_digest' }
+    }
+    $sidecar=[IO.File]::ReadAllText($fixture+'.zip.sha256')
+    if (-not $sidecar.StartsWith((Get-M7FileDigest ($fixture+'.zip'))+'  ',[StringComparison]::Ordinal)) { throw 'm7_literal_path_sidecar_mismatch' }
+    Write-Host 'PASS: literal-path evidence packaging preserves bracketed TRX names, decoys, nested directories, archive bytes and sidecar hashes.'
+} finally {
+    if ($null -ne $archive) { $archive.Dispose() }
+    if ([IO.Directory]::Exists($fixture)) { [IO.Directory]::Delete($fixture,$true) }
+    foreach ($path in @($fixture+'.zip',$fixture+'.zip.sha256')) { if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) } }
+}
