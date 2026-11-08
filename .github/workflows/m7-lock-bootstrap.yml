@@ -7,6 +7,9 @@ permissions:
   contents: read
 jobs:
   generate:
+    if: github.repository == 'chung6a8m/SaasOne' && github.ref == 'refs/heads/codex/m7-acceptance'
+    permissions:
+      contents: write
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -28,6 +31,24 @@ jobs:
           dotnet artifacts/workspace/SaaS.Workspace.Web.dll --feature-graph > artifacts/m7-bootstrap/native-features.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git rev-parse HEAD > artifacts/m7-bootstrap/source-sha.txt
+      - name: Stage generated lock blobs without updating any branch
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $records = @()
+          foreach ($project in @('SaaS.Workspace.Theme', 'SaaS.Workspace.Web')) {
+            $path = "samples/Workspace/$project/packages.lock.json"
+            $payload = Join-Path $env:RUNNER_TEMP 'm7-blob.json'
+            @{ content = [IO.File]::ReadAllText((Resolve-Path $path)); encoding = 'utf-8' } | ConvertTo-Json -Compress | Set-Content $payload -Encoding utf8NoBOM
+            $result = gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/blobs" --input $payload
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot stage generated lock blob.' }
+            $blob = $result | ConvertFrom-Json
+            $records += @{ path = $path; blobSha = $blob.sha; sha256 = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
+            Remove-Item $payload -Force
+          }
+          $records | ConvertTo-Json | Set-Content artifacts/m7-bootstrap/lock-blobs.json -Encoding utf8NoBOM
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
