@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "reviewStatus": "Proposed",
-  "reviewedBy": null,
-  "proposedBy": "ChatGPT engineering proposal under the project continuation request; not owner or independent reviewer approval",
-  "decisionReference": "docs/decisions/m7-performance-targets.md",
+  "reviewStatus": "Approved",
+  "reviewedBy": "chung6a8m (project owner; explicit approval in project conversation, recorded in Issue #12 comment 6728440377)",
+  "proposedBy": "ChatGPT engineering proposal; subsequently approved by the project owner",
+  "decisionReference": "docs/decisions/m7-target-approval.md",
   "loadConfigSha256": "694f09001e4ba2b40ba4ed07f93786daa8cb8fc0baaf7eaa9753507415f86adc",
   "baseline": {
     "sourceSha": "443e9ac2f0a51022de550437957f94a1e7dc6c23",
