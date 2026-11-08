@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "SaasOne",
+  "identity": "SaasOne.BusinessModule",
+  "name": "SaasOne isolated business module",
+  "shortName": "saas-module",
+  "sourceName": "SaaS.Example",
+  "preferNameDirectory": true,
+  "classifications": ["SaasOne", "Module"],
+  "tags": { "language": "C#", "type": "project" }
+}

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SaasPlatformRoot Condition="'$(SaasPlatformRoot)' == ''">$(MSBuildThisFileDirectory)../../Platform</SaasPlatformRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(SaasPlatformRoot)/SaaS.Abstractions/SaaS.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

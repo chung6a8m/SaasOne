@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="SaaS.Workspace.Web/SaaS.Workspace.Web.csproj" />
+  <Project Path="SaaS.Workspace.Theme/SaaS.Workspace.Theme.csproj" />
+</Solution>
