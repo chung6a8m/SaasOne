@@ -68,8 +68,8 @@ try {
     try {
         if (Test-Path $backupRoot) {
             $report.backupInventory = @(Get-ChildItem $backupRoot -Recurse -Filter manifest.json -File | ForEach-Object {
-                $document = Get-Content $_.FullName -Raw | ConvertFrom-Json -Depth 20
-                [ordered]@{ manifestSha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash; manifest = $document.manifest }
+                $document = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 20
+                [ordered]@{ manifestSha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash; manifest = $document.manifest }
             })
         }
     } catch { $report.backupInventory = @(); $report.inventoryError = 'backup_inventory_unreadable'; $code = 1 }
