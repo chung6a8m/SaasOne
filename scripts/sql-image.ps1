@@ -8,7 +8,7 @@ function Get-SaasPinnedSqlImageDigest {
     $requiredDigest = 'mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718'
     if ($Image -cne $requiredTag) { throw 'BLOCKED:sql_image_tag_mismatch' }
 
-    # RepoDigests is registry-authenticated metadata created by pull; a locally retagged
+    # RepoDigests records the registry-provided digest after pull; a locally retagged
     # image without this trusted digest must not be used as proof of the pinned release.
     $localDigests = @(& docker image inspect $Image --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>$null)
     if ($LASTEXITCODE -eq 0) {
