@@ -39,6 +39,31 @@ try {
     Assert-Case 'path_traversal_rejected' $rejected
     $secret = [guid]::NewGuid().ToString('N')
     Assert-Case 'connection_secret_redacted' (-not (Protect-M6Text (('Pass'+'word=')+$secret+';')).Contains($secret))
+    # Nested verification processes register dynamically generated fixture secrets with
+    # Actions. They are not in the parent's environment snapshot. Never log test values.
+    $mask = '::add-' + 'mask::'
+    $payload = 'fixture-' + [guid]::NewGuid().ToString('N')
+    Assert-Case 'workflow_mask_eof_redacted' ((Protect-M6Text ($mask + $payload)) -ceq ($mask + '[REDACTED]'))
+    Assert-Case 'workflow_mask_lf_preserved' ((Protect-M6Text ($mask + $payload + "`nnext")) -ceq ($mask + "[REDACTED]`nnext"))
+    Assert-Case 'workflow_mask_crlf_preserved' ((Protect-M6Text ($mask + $payload + "`r`nnext")) -ceq ($mask + "[REDACTED]`r`nnext"))
+    Assert-Case 'workflow_mask_prefixed_redacted' ((Protect-M6Text ('timestamp ' + $mask + $payload)) -ceq ('timestamp ' + $mask + '[REDACTED]'))
+    $encoded = $payload + '%0Asecond%0Dthird%25'
+    Assert-Case 'workflow_mask_encoded_payload_redacted' ((Protect-M6Text ($mask + $encoded)) -ceq ($mask + '[REDACTED]'))
+    $ordinary = 'source=' + ('a' * 40) + ';sha256=' + ('B' * 64)
+    Assert-Case 'evidence_identifiers_preserved' ((Protect-M6Text $ordinary) -ceq $ordinary)
+    # Round-trip the sanitized text through a real ZIP, just like local-verify's
+    # streaming log path. Inspect bytes rather than relying on Actions UI masking.
+    $logs = Join-Path $temp 'logs'; [IO.Directory]::CreateDirectory($logs) | Out-Null
+    $safeLog = Protect-M6Text ($mask + $payload + "`n" + $ordinary)
+    [IO.File]::WriteAllText((Join-Path $logs 'gate.log'), $safeLog)
+    $zipPath = Join-Path $temp 'evidence.zip'
+    [IO.Compression.ZipFile]::CreateFromDirectory($logs, $zipPath)
+    $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        $reader = [IO.StreamReader]::new($archive.GetEntry('gate.log').Open())
+        try { $packed = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        Assert-Case 'workflow_mask_absent_from_zip' (-not $packed.Contains($payload) -and $packed.Contains($ordinary) -and $packed.Contains($mask + '[REDACTED]'))
+    } finally { $archive.Dispose() }
     $report.status = 'PASS'; $code = 0
 } catch { $report.error = Protect-M6Text $_.Exception.Message; Write-Host $report.error }
 finally {

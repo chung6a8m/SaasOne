@@ -1,0 +1,80 @@
+name: M6 Windows and Linux storage rehearsal
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m6-storage-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  storage:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/pinned-toolchain
+      - if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          global-json-file: global.json
+      - name: Install pinned Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'powershell-7.6.9.zip'
+          Invoke-WebRequest 'https://github.com/PowerShell/PowerShell/releases/download/v7.6.9/PowerShell-7.6.9-win-x64.zip' -OutFile $archive
+          # Official PowerShell release asset 675639558 SHA-256, reviewed 2026-11-08.
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -cne 'CE7484804C0F0AD4DDA10C958E71ACDAF7EEBFB22505C1B480F89E0E9F1DA94D') { throw 'PowerShell digest mismatch' }
+          $destination = Join-Path $env:RUNNER_TEMP 'pwsh-7.6.9'
+          Expand-Archive $archive -DestinationPath $destination
+          $destination | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Build production assemblies from locked sources
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion.ToString() -ne '7.6.9') { throw 'PowerShell pin mismatch' }
+          dotnet tool restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore SaasOne.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build src/SaaS.Web/SaaS.Web.csproj --configuration Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File scripts/check-powershell-syntax.ps1
+          exit $LASTEXITCODE
+      - name: Disposable principal, key-retention and process-crash drill
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/m6-storage-drill.ps1 -DisposableHostAcknowledged
+          exit $LASTEXITCODE
+      - name: Evidence redaction and ZIP regression tests
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/test-m6-evidence.ps1
+          exit $LASTEXITCODE
+      - name: Secret-free marker writer regression
+        if: always()
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/test-m6-marker-writer.ps1
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m6-storage-${{ runner.os }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification/m6-storage-drill.json
+            artifacts/verification/m6-storage-drill.json.sha256
+            artifacts/verification/m6-evidence-self-tests.json
+          if-no-files-found: error
+          retention-days: 7
