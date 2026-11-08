@@ -1,0 +1,35 @@
+name: M7 source provenance
+on:
+  push:
+    branches: [codex/m7-acceptance-reuse]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: m7-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only, without credentials or local state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          mkdir -p artifacts/m7-source
+          git rev-parse HEAD > artifacts/m7-source/source-sha.txt
+          git archive --format=zip --output=artifacts/m7-source/source.zip HEAD
+          cd artifacts/m7-source
+          sha256sum source.zip > source.zip.sha256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m7-source-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/m7-source/
+          if-no-files-found: error
+          retention-days: 7
