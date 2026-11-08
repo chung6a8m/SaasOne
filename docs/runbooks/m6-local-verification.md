@@ -67,6 +67,15 @@ Cleanup removes only the fixture's uniquely named container and temporary backup
 
 ## Reading failures
 
+The M0 `dotnet test` invocation runs multiple test assemblies into the same results directory. VSTest can create collision-suffixed files such as `net10.0[1].trx`. M4/M5 policy inventory reads these with `-LiteralPath` and **must include every TRX**; it must never drop a file merely to avoid wildcard parsing. A fast, database-free regression check is:
+
+```powershell
+pwsh -NoProfile -File scripts/test-m3-evidence.ps1
+$LASTEXITCODE  # must be 0
+```
+
+This exercises both ordinary and bracketed TRX filenames before rerunning `-Scope Full`. The full run still regenerates M0–M6 evidence bound to its source SHA.
+
 Start with `SUMMARY.md`, then `summary.json.commands` and `issues`. Build errors precede SQL cases; absent SQL TRX after a build failure means **not run**, not passed. `m6-release-build.json` identifies the last complete migration stream; `m6-poc.json` has exact mandatory test discovery and outcomes; `m6-acceptance.json` binds inherited gate reports to the source SHA. The test names remain readable in TRX even when exception messages have been redacted.
 
 The implementation environment used to author this change has no dotnet, pwsh, Docker or SQL Server. No fabricated TRX, package, schema-drift PASS or acceptance PASS is checked in. See `docs/verification/m6-implementation-status.md` for the remaining acceptance work and review boundary.
