@@ -1,0 +1,50 @@
+name: M6 SQL rehearsal diagnostics
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m6-components-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sql-rehearsals:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Foundation checks and fresh test assemblies
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/check.ps1 -Scope M0
+          exit $LASTEXITCODE
+      - name: Build verified immutable release
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/build-release.ps1
+          exit $LASTEXITCODE
+      - name: All mandatory real-SQL M6 facts
+        shell: pwsh
+        run: |
+          $build = Get-Content artifacts/verification/m6-release-build.json -Raw | ConvertFrom-Json
+          if ($build.status -cne 'PASS' -or $build.exitCode -ne 0) { throw 'verified_release_build_required' }
+          pwsh -NoProfile -File scripts/m6-sql-fixture.ps1 -Package $build.package -ManifestSha256 $build.manifestSha256
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $after = @(& git status --porcelain=v1 --untracked-files=all)
+          if ($LASTEXITCODE -ne 0 -or $after.Count -ne 0) { throw 'source_changed_during_sql_rehearsal' }
+          Write-Host 'SQL rehearsal diagnostics passed; full M0-M6 acceptance and OS storage evidence are still required.'
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m6-sql-rehearsals-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/verification
+            artifacts/test-results/m6-poc
+          if-no-files-found: error
+          retention-days: 7
