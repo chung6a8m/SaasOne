@@ -4,11 +4,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 . "$PSScriptRoot/m6-common.ps1"
+. "$PSScriptRoot/m6-bundle-locks.ps1"
 $root = Split-Path $PSScriptRoot -Parent
-$report = [ordered]@{ scope = 'M6ReleaseBuild'; status = 'FAIL'; sourceSha = $null; commands = @(); package = $null; manifestSha256 = $null }
+$report = [ordered]@{ scope = 'M6ReleaseBuild'; status = 'FAIL'; sourceSha = $null; commands = @(); package = $null; manifestSha256 = $null; ridLockChanges = @(); worktreeCleanup = 'NOT_RUN' }
 $previousExecution = $env:SAAS_BUNDLE_EXECUTION
 $previousConnection = $env:SAAS_MIGRATION_CONNECTION
-$proof = $null; $code = 1
+$proof = $null; $code = 1; $worktree = $null; $worktreeAdded = $false
 Push-Location $root
 try {
     $sha = Get-M6Sha; $report.sourceSha = $sha
@@ -22,6 +23,17 @@ try {
     if (-not $IsWindows) { [IO.File]::SetUnixFileMode($outputFull, [IO.UnixFileMode]'UserRead,UserWrite,UserExecute') }
     foreach ($directory in @('host','bundles','sql')) { New-Item (Join-Path $outputFull $directory) -ItemType Directory | Out-Null }
     $report.package = $outputFull
+
+    # EF bundle calls dotnet publish --runtime on the owner's project graph. NuGet
+    # can extend packages.lock.json for this RID even after a locked-mode solution
+    # restore. Run *all* build commands in a detached, disposable copy of HEAD so
+    # the trusted checkout is never mutated. Validate its RID lock delta below.
+    $worktree = Join-Path $root ('artifacts/release-worktrees/' + [guid]::NewGuid().ToString('N'))
+    & git -C $root worktree add --detach $worktree $sha | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'release_worktree_create_failed' }
+    $worktreeAdded = $true
+    Push-Location $worktree
+    try {
     Invoke-M6Checked dotnet @('tool','restore')
     Invoke-M6Checked dotnet @('restore','SaasOne.slnx','--locked-mode')
     Invoke-M6Checked dotnet @('build','SaasOne.slnx','--configuration','Release','--no-restore')
@@ -53,7 +65,9 @@ try {
         $env:SAAS_RELEASE_MANIFEST_SHA256 = $digest
         Invoke-M6Checked dotnet @((Join-Path $outputFull 'host/SaaS.Web.dll'),'--maintenance','release-check',$outputFull,($outputFull + '.validated.json'))
     } finally { $env:SAAS_RELEASE_MANIFEST_SHA256 = $previousTrust }
-    $after = @(& git status --porcelain=v1 --untracked-files=all)
+    $report.ridLockChanges = @(Assert-M6BundleWorktreeChanges -Worktree $worktree -RuntimeIdentifier $RuntimeIdentifier)
+    } finally { Pop-Location }
+    $after = @(& git -C $root status --porcelain=v1 --untracked-files=all)
     if ($LASTEXITCODE -ne 0 -or $after.Count -ne 0 -or (Get-M6Sha) -cne $sha) { throw 'source_changed_during_release_build' }
     $report.manifestSha256 = $digest; $report.status = 'PASS'; $code = 0
     Write-Host "Release package: $outputFull"
@@ -61,6 +75,13 @@ try {
 } catch { $report.error = Protect-M6Text $_.Exception.Message; Write-Host $report.error }
 finally {
     Close-M6Package $proof
+    if ($worktreeAdded) {
+        # Only this newly created detached checkout can be force-removed.
+        & git -C $root worktree remove --force $worktree | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            $report.worktreeCleanup = 'FAIL'; $report.status = 'FAIL'; $report.error = 'release_worktree_cleanup_failed'; $code = 1
+        } else { $report.worktreeCleanup = 'PASS' }
+    }
     $env:SAAS_BUNDLE_EXECUTION = $previousExecution; $env:SAAS_MIGRATION_CONNECTION = $previousConnection
     $report.exitCode = $code
     Write-M6Json (Join-Path $root 'artifacts/verification/m6-release-build.json') $report
