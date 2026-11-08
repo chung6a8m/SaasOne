@@ -61,6 +61,7 @@ public sealed class M6ManifestTests
         var home = Path.Combine(Path.GetTempPath(), "saas-m6-package-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(home, "bundles"));
         Directory.CreateDirectory(Path.Combine(home, "sql"));
+        var ct = TestContext.Current.CancellationToken;
         try
         {
             var bytes = Encoding.UTF8.GetBytes("reviewed payload");
@@ -69,15 +70,15 @@ public sealed class M6ManifestTests
                 Files = [new("bundles/tenancy", bytes.Length, Convert.ToHexString(SHA256.HashData(bytes))),
                     new("sql/tenancy.sql", bytes.Length, Convert.ToHexString(SHA256.HashData(bytes)))]
             };
-            await File.WriteAllBytesAsync(Path.Combine(home, "bundles", "tenancy"), bytes);
-            await File.WriteAllBytesAsync(Path.Combine(home, "sql", "tenancy.sql"), bytes);
+            await File.WriteAllBytesAsync(Path.Combine(home, "bundles", "tenancy"), bytes, ct);
+            await File.WriteAllBytesAsync(Path.Combine(home, "sql", "tenancy.sql"), bytes, ct);
             var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(manifest, ReleasePackage.Json);
-            await File.WriteAllBytesAsync(Path.Combine(home, "release.json"), json);
+            await File.WriteAllBytesAsync(Path.Combine(home, "release.json"), json, ct);
             var digest = Convert.ToHexString(SHA256.HashData(json));
-            await using (var package = await ReleasePackage.OpenAsync(home, digest, CancellationToken.None))
+            await using (var package = await ReleasePackage.OpenAsync(home, digest, ct))
                 Assert.Equal(manifest.SourceSha, package.Manifest.SourceSha);
-            await File.WriteAllTextAsync(Path.Combine(home, "bundles", "tenancy"), "altered");
-            await Assert.ThrowsAsync<TenantContractException>(() => ReleasePackage.OpenAsync(home, digest, CancellationToken.None));
+            await File.WriteAllTextAsync(Path.Combine(home, "bundles", "tenancy"), "altered", ct);
+            await Assert.ThrowsAsync<TenantContractException>(() => ReleasePackage.OpenAsync(home, digest, ct));
         }
         finally { Directory.Delete(home, true); }
     }
