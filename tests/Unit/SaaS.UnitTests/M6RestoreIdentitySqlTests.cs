@@ -75,10 +75,11 @@ public sealed partial class M6BackupSqlTests
             }
             await using (var platform = TenancyConnections.PlatformContext(Environment.PlatformAdmin))
             {
+                // Assert the external audit contract, not inaccessible implementation constants.
                 Assert.True(await platform.Audit.AnyAsync(x => x.OperationId == operation
-                    && x.Action == PhysicalRestoreBarrier.Bound, Ct));
+                    && x.Action == "PhysicalRestoreBound", Ct));
                 Assert.False(await platform.Audit.AnyAsync(x => x.OperationId == operation
-                    && (x.Action == PhysicalRestoreBarrier.Verified || x.Action == "RecoveryAclApplyStarted"
+                    && (x.Action == "PhysicalRestoreIdentityVerified" || x.Action == "RecoveryAclApplyStarted"
                         || x.Action == "RecoveryCompleted"), Ct));
                 var row = await platform.ResourceOperations.AsNoTracking().SingleAsync(x => x.Id == operation, Ct);
                 Assert.True(row.Checkpoint <= ResourceCheckpoint.GateClosed);
