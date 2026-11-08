@@ -102,6 +102,9 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
     public async Task<IdentityFamily> ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken ct)
     {
         await using var db = Open();
+        // Keep one physical login for this validation only, not an authority snapshot.
+        // Every query below still executes; disposing this owned context closes it.
+        await db.Database.OpenConnectionAsync(ct);
         var family = await db.IdentityFamilies.AsNoTracking().SingleOrDefaultAsync(x => x.Id == familyId, ct);
         if (family is null || family.TenantId != routedTenantId || family.Issuer != deployment.Issuer.AbsoluteUri
             || family.RevokedAt is not null || family.SubscriptionExpiresAt <= Now || family.RefreshAbsoluteExpiresAt <= Now)
