@@ -42,7 +42,7 @@ public sealed class SqlFixtureTests
         Assert.True(fixture.Exists("sql-command.json"));
 
         var second = await fixture.RunAsync("pull-fail");
-        Assert.NotEqual(0, second.ExitCode);
+        Assert.True(second.ExitCode != 0, second.Output);
         using var failed = fixture.ReadReport();
         Assert.Equal("BLOCKED", failed.RootElement.GetProperty("status").GetString());
         Assert.Equal(second.ExitCode, failed.RootElement.GetProperty("exitCode").GetInt32());
@@ -58,7 +58,7 @@ public sealed class SqlFixtureTests
     {
         using var fixture = new FakeSqlFixture();
         var result = await fixture.RunAsync("cleanup-fail");
-        Assert.NotEqual(0, result.ExitCode);
+        Assert.True(result.ExitCode != 0, result.Output);
         using var failed = fixture.ReadReport();
         Assert.Equal("FAIL", failed.RootElement.GetProperty("status").GetString());
         Assert.Equal(result.ExitCode, failed.RootElement.GetProperty("exitCode").GetInt32());
@@ -87,7 +87,7 @@ public sealed class SqlFixtureTests
 
             if (OperatingSystem.IsWindows())
             {
-                File.WriteAllText(Path.Combine(binaries, "docker.cmd"), DockerWindows);
+                File.WriteAllText(Path.Combine(binaries, "docker.cmd"), DockerWindows.ReplaceLineEndings("\r\n"));
                 File.WriteAllText(Path.Combine(binaries, "git.cmd"), "@echo off\r\necho " + TestSha + "\r\n");
             }
             else
@@ -176,7 +176,7 @@ public sealed class SqlFixtureTests
         private const string DockerWindows = """
             @echo off
             if "%~1"=="pull" (
-                if "%FAKE_DOCKER_MODE%"=="pull-fail" exit /b 42
+                if "%FAKE_DOCKER_MODE%"=="pull-fail" exit 42
                 exit /b 0
             )
             if "%~1"=="run" (echo fake-container & exit /b 0)
@@ -184,7 +184,7 @@ public sealed class SqlFixtureTests
             if "%~1"=="port" (echo 127.0.0.1:31433 & exit /b 0)
             if "%~1"=="image" (echo mcr.microsoft.com/mssql/server@sha256:fake-test-digest & exit /b 0)
             if "%~1"=="rm" (
-                if "%FAKE_DOCKER_MODE%"=="cleanup-fail" exit /b 17
+                if "%FAKE_DOCKER_MODE%"=="cleanup-fail" exit 17
                 exit /b 0
             )
             exit /b 44
