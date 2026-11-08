@@ -39,16 +39,23 @@ public sealed partial class M6BackupSqlTests
         Task stdout = Task.CompletedTask, stderr = Task.CompletedTask;
         try
         {
-            // Allocate real pages so DMV observation is meaningful, not a checkpoint sleep.
-            // This table exists only in the disposable SQL fixture and is removed by cleanup.
+            // Allocate real pages in the existing append-only audit schema, not a probe
+            // table: the production closed-table inventory must still reject unknown tables.
+            // These valid JSON events survive the restore/recovery assertions unchanged.
             await using (var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct))
             await using (var fill = SqlOperations.Command(sql, """
-                CREATE TABLE [dbo].[M6RestoreCrashPayload] ([Id] int IDENTITY PRIMARY KEY, [Payload] binary(8000) NOT NULL);
-                INSERT INTO [dbo].[M6RestoreCrashPayload] ([Payload])
-                SELECT TOP (32768) CONVERT(binary(8000), CRYPT_GEN_RANDOM(8000))
-                FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
-                """))
-            { fill.CommandTimeout = 180; await fill.ExecuteNonQueryAsync(Ct); }
+                INSERT INTO [audit].[Events]
+                    ([Id], [TenantId], [ActorId], [Action], [PayloadHash], [SecurityGeneration],
+                     [ResultRevision], [OccurredAt], [CorrelationId], [ChangesJson])
+                SELECT TOP (32768) NEWID(), @tenant, @actor, 'M6RestoreCrashFixture',
+                    CONVERT(varchar(64), HASHBYTES('SHA2_256', payload.Json), 2), @generation,
+                    1, SYSUTCDATETIME(), @correlation, payload.Json
+                FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b
+                CROSS APPLY (SELECT CONVERT(nvarchar(max), N'{"drill":"')
+                    + CONVERT(varchar(4096), CRYPT_GEN_RANDOM(2048), 2) + N'"}' AS Json) AS payload;
+                """, ("@tenant", Alpha.Id), ("@actor", setup.Http.UserId),
+                ("@generation", (await CurrentAsync()).AuthorizationGeneration), ("@correlation", operation.ToString("N"))))
+            { fill.CommandTimeout = 180; Assert.Equal(32768, await fill.ExecuteNonQueryAsync(Ct)); }
             var source = await BackupAsync(store);
             evidence["backupId"] = source.BackupId;
             await using (var verified = await store.OpenAsync(Alpha.Id, source.BackupId, Ct))
@@ -153,6 +160,17 @@ public sealed partial class M6BackupSqlTests
             var completed = await maintenance.ResumeRecoveryAsync(Alpha.Id, operation, approved.RegistryVersion, Ct);
             Assert.Equal(ResourceCheckpoint.Completed, completed.Checkpoint);
             await TenantDatabaseVerifier.VerifyIdentityAsync(await CurrentAsync(), Environment.Migrator(Alpha), Ct);
+            await using (var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct))
+            {
+                var rows = Convert.ToInt32(await SqlOperations.ScalarAsync(sql, """
+                    SELECT COUNT(*) FROM [audit].[Events]
+                    WHERE [TenantId] = @tenant AND [Action] = 'M6RestoreCrashFixture'
+                      AND [CorrelationId] = @correlation AND ISJSON([ChangesJson]) = 1
+                      AND [PayloadHash] = CONVERT(varchar(64), HASHBYTES('SHA2_256', [ChangesJson]), 2);
+                    """, Ct, ("@tenant", Alpha.Id), ("@correlation", operation.ToString("N"))));
+                Assert.Equal(32768, rows);
+                evidence["restoredAuditEvents"] = rows;
+            }
             await using (var platform = TenancyConnections.PlatformContext(Environment.PlatformAdmin))
                 Assert.Equal(bound, (await platform.Audit.SingleAsync(x => x.OperationId == operation && x.Action == "PhysicalRestoreBound", Ct)).Details);
             evidence["completedUtc"] = DateTimeOffset.UtcNow;
