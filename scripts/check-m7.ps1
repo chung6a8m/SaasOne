@@ -56,7 +56,7 @@ function Require-TrackedPath([string]$Relative) {
     if ((Get-Item -LiteralPath $full).Length -gt 5242880) { throw 'm7_evidence_file_too_large' }
     return $full
 }
-Push-Location $root
+Push-Location -LiteralPath $root
 try {
     $lock=[IO.File]::Open((Join-Path $root 'artifacts/m7-verification.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
     $report.sourceSha=Get-M6Sha

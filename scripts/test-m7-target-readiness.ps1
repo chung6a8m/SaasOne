@@ -96,10 +96,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Fixture git add failed.' }
     & git -C $fixture -c user.name=M7Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm 'Synthetic approval preflight fixture'
     if ($LASTEXITCODE -ne 0) { throw 'Fixture git commit failed.' }
-    & pwsh -NoProfile -File (Join-Path $fixture 'scripts/check-m7.ps1') -Mode Acceptance -Targets targets.json *> $log
+    $output=@(& pwsh -NoProfile -File (Join-Path $fixture 'scripts/check-m7.ps1') -Mode Acceptance -Targets targets.json 2>&1)
     $code=$LASTEXITCODE
+    [IO.File]::WriteAllText($log,($output | Out-String))
     $runs=@(Get-ChildItem -LiteralPath (Join-Path $fixture 'artifacts/m7-runs') -Directory)
-    if ($code -ne 2 -or $runs.Count -ne 1) { throw 'Unapproved entry point must return BLOCKED exit 2 with one evidence bundle.' }
+    if ($code -ne 2 -or $runs.Count -ne 1) { throw ('Unapproved entry point must return BLOCKED exit 2 with one evidence bundle. '+($output | Out-String)) }
     $blocked=Get-Content -LiteralPath (Join-Path $runs[0].FullName 'verification.json') -Raw | ConvertFrom-Json
     if ($blocked.status -cne 'BLOCKED' -or $blocked.error -cne 'BLOCKED:owner_approved_targets_required' -or $blocked.commands.Count -ne 0 -or $blocked.ownerReview -cne 'PENDING') { throw 'Acceptance must block before any expensive gate, without fabricating approval.' }
     if (-not (Test-Path -LiteralPath ($runs[0].FullName+'.zip'))) { throw 'Blocked entry point must still package evidence.' }
