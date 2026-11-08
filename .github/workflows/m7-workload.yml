@@ -1,0 +1,49 @@
+name: M7 four-tenant HTTPS correctness and load
+on:
+  push:
+    branches: [main, codex/m7-acceptance]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: m7-workload-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  workload:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Locked build and real SQL four-tenant matrix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/check-powershell-syntax.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore SaasOne.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build SaasOne.slnx -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $mode = if (Test-Path tests/Load/m7-targets.json) { 'Acceptance' } else { 'Baseline' }
+          ./scripts/m7-sql-fixture.ps1 -Suite Workload -Mode $mode
+          exit $LASTEXITCODE
+      - name: Hash safe evidence
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path artifacts/m7-evidence)) { throw 'M7 evidence is missing; build or prerequisites failed.' }
+          $files = @(Get-ChildItem artifacts/m7-evidence -File)
+          $files | ForEach-Object { '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name } | Set-Content artifacts/m7-evidence/SHA256SUMS -Encoding utf8NoBOM
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m7-workload-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/m7-evidence/
+          if-no-files-found: error
+          retention-days: 7

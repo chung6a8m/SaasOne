@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,8 +22,8 @@ using Xunit;
 
 namespace SaaS.UnitTests;
 
-// A real native Orchard/OpenIddict HTTP pipeline. Only the transport is TestServer;
-// no fake authentication scheme, unsigned token or pre-authenticated principal.
+// Real Orchard/OpenIddict in both modes. M7 opts into loopback Kestrel HTTPS;
+// inherited correctness suites retain TestServer. Authentication is never mocked.
 internal sealed class IdentityHttpFixture : IAsyncDisposable
 {
     public static readonly Uri Origin = new("https://localhost/");
@@ -32,24 +35,27 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
     public string Credential { get; } = "Aa1!" + Guid.NewGuid().ToString("N");
     public Guid UserId { get; private set; }
     public string Subject { get; private set; } = "";
+    public int NetworkPort { get; private set; }
     public ConcurrentDictionary<string, OAuthTokens> CapturedTokens { get; } = new(StringComparer.Ordinal);
     private readonly string _home = Path.Combine(Path.GetTempPath(), "saas-identity-" + Guid.NewGuid().ToString("N"));
     private readonly ConcurrentDictionary<Guid, string> _secrets = [];
     private readonly List<(Guid Id, SaaS.Abstractions.Tenancy.SubscriptionStatus Status, DateTimeOffset Expiry)> _original = [];
     private readonly bool _productHost;
+    private readonly bool _network;
     private WebApplication _application = null!;
     private X509Certificate2 _signing = null!;
     private X509Certificate2 _encryption = null!;
     public IShellHost Shells => _application.Services.GetRequiredService<IShellHost>();
 
-    private IdentityHttpFixture(M1SqlEnvironment environment, bool productHost)
+    private IdentityHttpFixture(M1SqlEnvironment environment, bool productHost, bool network)
     {
         Environment = environment;
         _productHost = productHost;
+        _network = network;
     }
-    public static async Task<IdentityHttpFixture> CreateAsync(M1SqlEnvironment environment, bool productHost = false)
+    public static async Task<IdentityHttpFixture> CreateAsync(M1SqlEnvironment environment, bool productHost = false, bool network = false)
     {
-        var fixture = new IdentityHttpFixture(environment, productHost);
+        var fixture = new IdentityHttpFixture(environment, productHost, network);
         try
         {
             Directory.CreateDirectory(fixture._home);
@@ -73,7 +79,31 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         catch { await fixture.DisposeAsync(); throw; }
     }
 
-    public HttpClient NewClient() => new(_application.GetTestServer().CreateHandler()) { BaseAddress = Origin, Timeout = TimeSpan.FromSeconds(30) };
+    public HttpClient NewClient() => new(NewTransport()) { BaseAddress = Origin, Timeout = TimeSpan.FromSeconds(_network ? 120 : 30) };
+    private HttpMessageHandler NewTransport()
+    {
+        if (!_network) return _application.GetTestServer().CreateHandler();
+        if (NetworkPort == 0) throw new InvalidOperationException("HTTPS listener has not started.");
+        var expectedCertificate = _signing.GetCertHashString();
+        return new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false, UseCookies = false, UseProxy = false,
+            SslOptions = new() { RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+                certificate is not null && certificate.GetCertHashString() == expectedCertificate },
+            ConnectCallback = async (context, ct) =>
+            {
+                if (context.DnsEndPoint.Host != Origin.Host || context.DnsEndPoint.Port != 443)
+                    throw new InvalidOperationException("Load transport origin mismatch.");
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                try
+                {
+                    await socket.ConnectAsync(IPAddress.Loopback, NetworkPort, ct);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            }
+        };
+    }
     public HttpBrowser NewBrowser() => new(NewClient());
     public string Secret(Guid tenantId) => _secrets.GetOrAdd(tenantId, _ => Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)));
     public TestTenant Tenant(string slug) => Environment.Tenants.Single(x => x.Slug == slug);
@@ -83,15 +113,13 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest("CN=localhost", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
-        var san = new SubjectAlternativeNameBuilder();
-        san.AddDnsName("localhost");
+        var san = new SubjectAlternativeNameBuilder(); san.AddDnsName("localhost");
         request.CertificateExtensions.Add(san.Build());
         using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(2));
         var path = Path.Combine(_home, name + ".pfx");
         File.WriteAllBytes(path, generated.Export(X509ContentType.Pfx, Credential));
         return X509CertificateLoader.LoadPkcs12FromFile(path, Credential, X509KeyStorageFlags.EphemeralKeySet);
     }
-
     private ShellSettings[] Settings()
     {
         var connections = new TenancyConnections();
@@ -99,7 +127,6 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         root["TablePrefix"] = Deployment.NativePrefix;
         return [root, .. Environment.Tenants.Select(x => NativeServices.Settings(x.Slug, x.Slug, x.Id, Environment.Runtime(x)))];
     }
-
     private async Task StartAsync()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -107,7 +134,8 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
             ApplicationName = typeof(Program).Assembly.GetName().Name, ContentRootPath = AppContext.BaseDirectory, EnvironmentName = Environments.Production
         });
         builder.Logging.ClearProviders();
-        builder.WebHost.UseTestServer();
+        if (_network) builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0, endpoint => endpoint.UseHttps(_signing)));
+        else builder.WebHost.UseTestServer();
         if (_productHost) IdentityRuntimeHost.Configure(builder, Deployment, Clock);
         else
         {
@@ -116,7 +144,6 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         }
         builder.Services.AddOrchardCore().ConfigureServices(services => services.Configure<OpenIdConnectOptions>(IdentityNames.Oidc, options =>
         {
-            // The handler still performs discovery, signature validation and code redemption over HTTP.
             options.BackchannelHttpHandler = new Backchannel(this);
             options.Events.OnTokenResponseReceived = context =>
             {
@@ -126,43 +153,47 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
             };
         }));
         _application = builder.Build();
+        if (_network && _productHost) _application.Use(SaaS.Web.Release.PlatformReleaseRuntimeGate.EnterAsync);
         if (_productHost) IdentityRuntimeHost.Use(_application);
         else _application.UseOrchardCore();
         _application.Run(context => { context.Response.StatusCode = 404; return Task.CompletedTask; });
         await _application.StartAsync();
+        if (_network)
+        {
+            var addresses = _application.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
+                ?? throw new InvalidOperationException("Kestrel address inventory missing.");
+            var address = new Uri(addresses.Addresses.Single());
+            if (address.Scheme != "https" || !IPAddress.IsLoopback(IPAddress.Parse(address.Host)))
+                throw new InvalidOperationException("Load listener must be loopback HTTPS.");
+            NetworkPort = address.Port;
+        }
     }
-
     public async Task RestartAsync()
     {
         await _application.DisposeAsync();
-        _signing.Dispose();
-        _encryption.Dispose();
+        NetworkPort = 0;
+        _signing.Dispose(); _encryption.Dispose();
         _signing = X509CertificateLoader.LoadPkcs12FromFile(Path.Combine(_home, "signing.pfx"), Credential, X509KeyStorageFlags.EphemeralKeySet);
         _encryption = X509CertificateLoader.LoadPkcs12FromFile(Path.Combine(_home, "encryption.pfx"), Credential, X509KeyStorageFlags.EphemeralKeySet);
         Deployment = new IdentityDeployment(Origin, _signing, _encryption, Path.Combine(_home, "dp"), Deployment.NativePrefix, Secret);
         await StartAsync();
     }
-
     public async Task InDefaultAsync(Func<IServiceProvider, Task> action)
     {
         var scope = await Shells.GetScopeAsync("Default");
         await scope.UsingServiceScopeAsync(current => action(current.ServiceProvider));
     }
-
     public async Task SetReadFailureAsync(string source, bool fail)
     {
         var table = source switch
         {
             "issuer" => "[dbo].[" + Deployment.NativePrefix + "_OpenId_Document]",
-            "platform" => "[identity].[Families]",
-            "account" => "[identity].[Accounts]",
-            "membership" => "[identity].[Memberships]",
+            "platform" => "[identity].[Families]", "account" => "[identity].[Accounts]", "membership" => "[identity].[Memberships]",
             _ => throw new ArgumentOutOfRangeException(nameof(source))
         };
         await using var connection = await SqlOperations.OpenAsync(Environment.PlatformAdmin, CancellationToken.None);
         await SqlOperations.ExecuteAsync(connection, $"{(fail ? "DENY" : "GRANT")} SELECT ON OBJECT::{table} TO [saas_platform_runtime]", CancellationToken.None);
     }
-
     public async ValueTask DisposeAsync()
     {
         if (_application is not null) await _application.DisposeAsync();
@@ -173,18 +204,16 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
             if (current.Subscription != original.Status || current.ExpiresAt != original.Expiry)
                 await Operations.SetTenantAsync(original.Id, original.Status, original.Expiry, CancellationToken.None);
         }
-        _signing?.Dispose();
-        _encryption?.Dispose();
+        _signing?.Dispose(); _encryption?.Dispose();
         if (Directory.Exists(_home)) Directory.Delete(_home, recursive: true);
     }
-
     private sealed class Backchannel(IdentityHttpFixture fixture) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri?.Authority != Origin.Authority || request.RequestUri.Scheme != "https")
                 throw new InvalidOperationException("Backchannel origin mismatch.");
-            using var invoker = new HttpMessageInvoker(fixture._application.GetTestServer().CreateHandler());
+            using var invoker = new HttpMessageInvoker(fixture.NewTransport());
             return await invoker.SendAsync(request, cancellationToken);
         }
     }
@@ -198,7 +227,6 @@ internal sealed class IdentityHttpFixture : IAsyncDisposable
         public Task RemoveSettingsAsync(ShellSettings value) => throw new InvalidOperationException("Private maintenance only.");
     }
 }
-
 internal sealed class TestClock : TimeProvider
 {
     private TimeSpan _offset;

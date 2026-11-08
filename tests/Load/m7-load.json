@@ -1,0 +1,6 @@
+{
+  "virtualUsersPerTenant": 25,
+  "rampSeconds": 10,
+  "steadySeconds": 30,
+  "requestTimeoutSeconds": 120
+}

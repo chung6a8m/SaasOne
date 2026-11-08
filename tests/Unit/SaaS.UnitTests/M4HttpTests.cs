@@ -37,7 +37,7 @@ public sealed partial class M4HttpTests(M1SqlFixture fixture) : IClassFixture<M1
         using var response = await client.GetAsync("/alpha/api/v1/orders", Ct);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
-    internal async Task<HttpHarness> HttpAsync(bool grant = true, bool approval = false)
+    internal async Task<HttpHarness> HttpAsync(bool grant = true, bool approval = false, bool network = false)
     {
         var previous = System.Environment.GetEnvironmentVariable("SAAS_ACCESS_CONTROL_ENABLED");
         System.Environment.SetEnvironmentVariable("SAAS_ACCESS_CONTROL_ENABLED", "true");
@@ -66,7 +66,7 @@ public sealed partial class M4HttpTests(M1SqlFixture fixture) : IClassFixture<M1
                 if (Convert.ToInt32(await SqlOperations.ScalarAsync(sql, "SELECT CASE WHEN OBJECT_ID('access.State') IS NULL THEN 0 ELSE 1 END", Ct)) == 1)
                     await SeedAsync(tenant, AclDocument.Empty);
             }
-            http = await IdentityHttpFixture.CreateAsync(Environment, productHost: true);
+            http = await IdentityHttpFixture.CreateAsync(Environment, productHost: true, network: network);
             foreach (var tenant in Environment.Tenants)
             {
                 await using var db = TenancyConnections.PlatformContext(Environment.PlatformAdmin);

@@ -1,0 +1,6 @@
+[
+  "SaaS.UnitTests.M7FourTenantTests.Four_tenant_HTTPS_matrix_rejects_cross_tenant_data_and_permission_substitution",
+  "SaaS.UnitTests.M7FourTenantTests.Concurrent_four_tenant_edits_and_decisions_preserve_single_effect_and_exact_audit",
+  "SaaS.UnitTests.M7FourTenantTests.Delta_lifecycle_and_committed_revocation_do_not_affect_other_tenants_or_revive_credentials",
+  "SaaS.UnitTests.M7FourTenantTests.One_hundred_native_HTTPS_sessions_record_source_bound_four_tenant_load_and_SQL_invariants"
+]
