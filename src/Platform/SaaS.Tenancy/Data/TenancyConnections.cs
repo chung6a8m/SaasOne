@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using SaaS.Abstractions.Tenancy;
@@ -63,9 +64,21 @@ public sealed class TenancyConnections
 
     public static async Task VerifySchemaAsync(DbContext context, CancellationToken cancellationToken)
     {
-        var expected = context.Database.GetMigrations().Order(StringComparer.Ordinal).ToArray();
-        var applied = (await context.Database.GetAppliedMigrationsAsync(cancellationToken)).Order(StringComparer.Ordinal).ToArray();
-        if (expected.Length == 0 || !expected.SequenceEqual(applied, StringComparer.Ordinal))
-            throw new TenantContractException("database_schema_mismatch");
+        // EF's existence/history probes otherwise open and close for each query.
+        // Retain only the transport for this call; every schema query stays fresh.
+        // A caller-owned connection/transaction must keep its original lifetime.
+        var closeWhenDone = context.Database.GetDbConnection().State != ConnectionState.Open;
+        try
+        {
+            if (closeWhenDone) await context.Database.OpenConnectionAsync(cancellationToken);
+            var expected = context.Database.GetMigrations().Order(StringComparer.Ordinal).ToArray();
+            var applied = (await context.Database.GetAppliedMigrationsAsync(cancellationToken)).Order(StringComparer.Ordinal).ToArray();
+            if (expected.Length == 0 || !expected.SequenceEqual(applied, StringComparer.Ordinal))
+                throw new TenantContractException("database_schema_mismatch");
+        }
+        finally
+        {
+            if (closeWhenDone) await context.Database.CloseConnectionAsync();
+        }
     }
 }

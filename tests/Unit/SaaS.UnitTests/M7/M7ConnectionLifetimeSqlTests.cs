@@ -59,7 +59,7 @@ public sealed class M7ConnectionLifetimeSqlTests
         Assert.Equal(0, profile.Snapshot().Open.Count);
         await using var command = SqlOperations.Command(sql, "SELECT XACT_STATE()");
         command.Transaction = transaction;
-        Assert.Equal(1, await command.ExecuteScalarAsync(Ct));
+        Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(Ct)));
         await transaction.RollbackAsync(Ct);
     }
 
