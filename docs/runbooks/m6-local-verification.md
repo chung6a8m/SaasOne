@@ -4,7 +4,7 @@ Status: implementation candidate. No runtime acceptance is claimed until the ful
 
 ## Run from a clean checkout
 
-Use Windows x64 with Docker Desktop Linux containers, or Linux x64 with Docker. The repo pins **.NET SDK 10.0.403** and **PowerShell 7.6.9**. Docker must be running and able to pull the pinned SQL Server image. NuGet restore requires the configured feeds. Full verification creates disposable SQL Server Developer instances; it does not use deployment databases or the caller's `SAAS_*`/`MSSQL_*` credentials.
+Use Windows x64 with Docker Desktop Linux containers, or Linux x64 with Docker. The repo pins **.NET SDK 10.0.403** and **PowerShell 7.6.9**. Docker must be running with Linux containers; the exact SQL Server image can be pre-pulled once, and subsequent local runs need no MCR connection when its registry digest is verified. NuGet restore requires the configured feeds. Full verification creates disposable SQL Server Developer instances; it does not use deployment databases or the caller's `SAAS_*`/`MSSQL_*` credentials.
 
 ```powershell
 # From the repository root, on the M6 branch with all changes committed:
@@ -21,6 +21,18 @@ The runner invokes inherited M0–M5 gates, checks M6's exact policy-case invent
 `-Scope Components` runs the solution build/component gate without SQL fixtures. Its success is explicitly **PASS_COMPONENTS_NOT_ACCEPTANCE**, never M6 acceptance. It is useful for finding compilation issues before the full run.
 
 Exit codes: `0` = selected scope passed; `1` = failed or invalid evidence; `2` = blocked prerequisite. A child gate may report BLOCKED inside a nonzero full-gate result; inspect `summary.json`, logs and individual reports rather than relying only on the exit code. Owner review remains PENDING even when all automated gates pass.
+
+## SQL image preflight and intermittent registry errors
+
+All M0–M6 SQL fixtures use the same tag `mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04` and pin registry digest `sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718`. Each fixture first queries Docker's local `RepoDigests`. If the exact pinned registry digest exists, it uses the cached image without calling `docker pull`; otherwise, it pulls the tag and verifies the resulting digest **before starting SQL**. A cached tag with a missing/wrong digest fails closed (`BLOCKED:sql_image_digest_mismatch`), not silently accepted. The SQL fixtures also verify SQL Server product version `16.0.4305.5` (M1–M6).
+
+On Windows PowerShell, inspect the local metadata:
+
+```powershell
+docker image inspect mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04 --format '{{range .RepoDigests}}{{println .}}{{end}}'
+```
+
+Expected output includes `mcr.microsoft.com/mssql/server@sha256:cf8f0ab2ebe61feec2eed2629061a07d247f791c2a8ddda74a4ac9f06a291718`. If the image is missing, use `docker pull mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04` once when MCR is reachable. If its digest differs, stop and investigate rather than retagging/relabeling it to bypass the check. MCR may intermittently return `EOF` even after a previous successful pull; an already-verified cached image avoids this repeated network dependency. The runner does not bypass verification based on a tag alone or on an unverified `docker load`.
 
 ## What to return
 
