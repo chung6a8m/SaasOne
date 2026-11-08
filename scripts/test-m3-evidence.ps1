@@ -33,7 +33,7 @@ try {
         [IO.File]::WriteAllText((Join-Path $trxRoot $fileName), $xml)
     }
     foreach ($milestone in @('M4','M5')) {
-        $found = @(Get-M3PolicyTrxResults -ResultsDirectory $trxRoot -TestNamePattern ('^SaaS\\.UnitTests\\.' + $milestone))
+        $found = @(Get-M3PolicyTrxResults -ResultsDirectory $trxRoot -TestNamePattern ('^SaaS\.UnitTests\.' + $milestone))
         $names = @($found | ForEach-Object { [string]$_.testName } | Sort-Object -Unique)
         if ($found.Count -ne 2 -or $names.Count -ne 2 -or
             @($found | Where-Object { $_.outcome -cne 'Passed' }).Count -ne 0) {
