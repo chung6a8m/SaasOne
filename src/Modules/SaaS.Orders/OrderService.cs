@@ -267,13 +267,27 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
 
     private static async Task<OrderRow> LoadAsync(OrdersDbContext db, Guid id, CancellationToken ct)
     {
-        var row = await db.Orders.SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw new AccessDeniedException(404, "order_not_found");
+        // One server-side SQL SELECT under the existing transaction-owned
+        // resource lock. Keep the OrderRow tracked for rowversion concurrency
+        // and include ALL current and historical revision integrity facts.
+        // This is not a cached authority/history snapshot across operations.
+        var loaded = await db.Orders.Where(x => x.Id == id).Select(row => new
+        {
+            Row = row,
+            Latest = db.Revisions.AsNoTracking()
+                .Where(revision => revision.OrderId == row.Id && revision.Revision == row.Revision)
+                .SingleOrDefault(),
+            HistoryCount = db.Revisions.LongCount(revision => revision.OrderId == row.Id),
+            HistoricalApproval = db.Revisions.Any(revision =>
+                revision.OrderId == row.Id && revision.ApprovalRequired)
+        }).SingleOrDefaultAsync(ct);
+        var row = loaded?.Row ?? throw new AccessDeniedException(404, "order_not_found");
         var current = row.View(); OrderPolicy.DemandIntegrity(current);
-        var latest = await db.Revisions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == id && x.Revision == row.Revision, ct);
+        var latest = loaded!.Latest;
         if (latest is null || latest.Status != row.Status || latest.ApprovalRequired != row.ApprovalRequired
             || JsonSerializer.Deserialize<OrderView>(latest.SnapshotJson) != current
-            || await db.Revisions.LongCountAsync(x => x.OrderId == id, ct) != row.Revision
-            || !row.ApprovalRequired && await db.Revisions.AnyAsync(x => x.OrderId == id && x.ApprovalRequired, ct))
+            || loaded.HistoryCount != row.Revision
+            || !row.ApprovalRequired && loaded.HistoricalApproval)
             throw new AccessDeniedException(503, "order_history_invalid");
         return row;
     }
