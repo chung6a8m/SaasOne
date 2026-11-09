@@ -32,6 +32,11 @@ public static class SqlOperations
     public static async Task RequireRuntimeAsync(string connection, CancellationToken cancellationToken)
     {
         await using var sql = await OpenAsync(connection, cancellationToken);
+        await RequireRuntimeAsync(sql, cancellationToken);
+    }
+    // Borrow an already-open, server-selected connection; ownership stays with the caller.
+    public static async Task RequireRuntimeAsync(SqlConnection sql, CancellationToken cancellationToken)
+    {
         var safe = await ScalarAsync(sql, """
             SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin') = 0
                 AND IS_MEMBER('db_owner') = 0 AND IS_MEMBER('db_ddladmin') = 0

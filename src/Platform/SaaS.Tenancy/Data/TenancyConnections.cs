@@ -62,6 +62,9 @@ public sealed class TenancyConnections
     public static TenantDbContext CustomerContext(string connection) => new(new DbContextOptionsBuilder<TenantDbContext>()
         .UseSqlServer(connection, sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", "tenancy")).Options);
 
+    public static TenantDbContext CustomerContext(SqlConnection connection) => new(new DbContextOptionsBuilder<TenantDbContext>()
+        .UseSqlServer(connection, sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", "tenancy")).Options);
+
     public static async Task VerifySchemaAsync(DbContext context, CancellationToken cancellationToken)
     {
         // EF's existence/history probes otherwise open and close for each query.

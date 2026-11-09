@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using SaaS.Abstractions.Tenancy;
 using SaaS.Tenancy.Data;
@@ -21,6 +22,13 @@ public static class TenantDatabaseVerifier
     public static async Task VerifyIdentityAsync(TenantRegistration registration, string connection, CancellationToken cancellationToken)
     {
         ValidateRegistration(registration);
+        await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+        await VerifyIdentityAsync(registration, sql, cancellationToken);
+    }
+
+    public static async Task VerifyIdentityAsync(TenantRegistration registration, SqlConnection connection, CancellationToken cancellationToken)
+    {
+        ValidateRegistration(registration);
         await using var database = TenancyConnections.CustomerContext(connection);
         var records = await database.Identity.AsNoTracking().Take(2).ToArrayAsync(cancellationToken);
         TenantIdentity.Verify(registration.Id, records.FirstOrDefault()?.TenantId, records.Length);
@@ -29,6 +37,13 @@ public static class TenantDatabaseVerifier
     }
 
     public static async Task VerifyAsync(TenantRegistration registration, string connection, OrchardBaseline orchard, CancellationToken cancellationToken)
+    {
+        ValidateRegistration(registration);
+        await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+        await VerifyAsync(registration, sql, orchard, cancellationToken);
+    }
+
+    public static async Task VerifyAsync(TenantRegistration registration, SqlConnection connection, OrchardBaseline orchard, CancellationToken cancellationToken)
     {
         await VerifyIdentityAsync(registration, connection, cancellationToken);
         await SqlOperations.RequireRuntimeAsync(connection, cancellationToken);

@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -25,6 +26,11 @@ public static class FoundationProfile
     public static async Task<OrchardBaseline> ReadSnapshotAsync(string connection, CancellationToken cancellationToken)
     {
         await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+        return await ReadSnapshotAsync(sql, cancellationToken);
+    }
+
+    public static async Task<OrchardBaseline> ReadSnapshotAsync(SqlConnection sql, CancellationToken cancellationToken)
+    {
         var marker = await SqlOperations.ScalarAsync(sql,
             "SELECT COUNT(*) FROM [dbo].[oc_SaaSFoundation] WHERE [Id] = 1 AND [Version] = 1", cancellationToken);
         if (marker is not int count || count != 1) throw new TenantContractException("orchard_foundation_mismatch");

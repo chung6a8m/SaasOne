@@ -256,17 +256,28 @@ public sealed class IdentityInstaller(TenancyConnections connections, IdentityDe
 
     public static async Task VerifyAsync(TenancyConnections connections, IdentityDeployment deployment, CancellationToken ct)
     {
-        await using var db = TenancyConnections.PlatformContext(connections.Platform("runtime"));
+        await using var sql = await SqlOperations.OpenAsync(connections.Platform("runtime"), ct);
+        await using var db = TenancyConnections.PlatformContext(sql);
+        await VerifyAsync(db, deployment, ct);
+    }
+
+    internal static async Task VerifyAsync(PlatformDbContext db, IdentityDeployment deployment, CancellationToken ct)
+    {
         await TenancyConnections.VerifySchemaAsync(db, ct);
         var installation = await db.IdentityInstallations.AsNoTracking().SingleOrDefaultAsync(x => x.NativePrefix == deployment.NativePrefix, ct);
         if (installation is null || installation.Version != 1 || installation.Issuer != deployment.Issuer.AbsoluteUri || installation.FeatureHash != FeatureHash
-            || installation.MigrationHash != await ReadMigrationHashAsync(connections.Platform("runtime"), deployment.NativePrefix, ct))
+            || installation.MigrationHash != await ReadMigrationHashAsync((SqlConnection)db.Database.GetDbConnection(), deployment.NativePrefix, ct))
             throw new TenantContractException("identity_not_ready");
     }
 
     private static async Task<string> ReadMigrationHashAsync(string connectionString, string prefix, CancellationToken ct)
     {
         await using var connection = await SqlOperations.OpenAsync(connectionString, ct);
+        return await ReadMigrationHashAsync(connection, prefix, ct);
+    }
+
+    private static async Task<string> ReadMigrationHashAsync(SqlConnection connection, string prefix, CancellationToken ct)
+    {
         await using var command = SqlOperations.Command(connection, $"SELECT [Type], [Content] FROM [dbo].[{prefix}_Document] WHERE [Type] LIKE N'%ShellDescriptor%' OR [Type] LIKE N'%DataMigrationRecord%'");
         await using var reader = await command.ExecuteReaderAsync(ct);
         var descriptors = 0;
