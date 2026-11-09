@@ -38,11 +38,21 @@ public sealed partial class M2IdentityPocTests
                 nativeOpens = reference.Snapshot().Open.Count;
             }
             Assert.Equal(1, nativeOpens);
+            using var stageObserver = new M7StageProfile();
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 using var measured = new M7SqlProfile();
                 Assert.Equal(familyId, (await authority.ValidateAsync(familyId, tenantId, false, ct)).Id);
                 Assert.Equal(nativeOpens + 1, measured.Snapshot().Open.Count);
+                // RED: all seven independent platform authority entities must
+                // be checked freshly, but via ONE server-side SQL SELECT per
+                // validation; native issuer still has its own fresh SQL scope.
+                var fresh = Assert.Single(measured.SnapshotStages()
+                    .Where(x => x.Stage == "identity.fresh"));
+                Assert.Equal(1, fresh.Open.Count);
+                Assert.Equal(1, fresh.Command.Count);
+                Assert.Equal(0, fresh.Open.Errors);
+                Assert.Equal(0, fresh.Command.Errors);
                 Assert.Equal(0, measured.Snapshot().Pending);
             }
             Assert.False(new SqlConnectionStringBuilder(new TenancyConnections().Platform("runtime")).Pooling);
