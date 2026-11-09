@@ -156,7 +156,8 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         var actor = access.Current.UserId;
         var ids = await db.Orders.AsNoTracking().Where(x => own && x.CreatedBy == actor || others && x.CreatedBy != actor)
             .OrderByDescending(x => x.CreatedAt).ThenBy(x => x.Id).Skip(page * 50).Take(51).Select(x => x.Id).ToArrayAsync(token);
-        foreach (var id in ids.Order()) await LockAsync(tx, ResourceLock(id), false, token);
+        await SqlTransactionLocks.AcquireOrderedSharedAsync((SqlConnection)tx.Connection, (SqlTransaction)tx.Transaction,
+            ids.Order().Select(ResourceLock).ToArray(), 30000, token);
         var refreshed = await AccessAsync(tx, token); SameIdentity(access, refreshed);
         // Resource locks and the refreshed current authority precede all batch reads.
         // Never run these reads concurrently on the enlisted transaction connection.

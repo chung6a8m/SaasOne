@@ -69,6 +69,57 @@ public static class TenantWriteGate
 
 public static class SqlTransactionLocks
 {
+    /// <summary>
+    /// Acquires distinct ordered shared application locks in one client round trip.
+    /// Each resource retains its own SQL transaction-owned lock and its own timeout.
+    /// The caller supplies the deterministic order and must roll back on any failure.
+    /// </summary>
+    public static async Task AcquireOrderedSharedAsync(SqlConnection connection, SqlTransaction transaction,
+        IReadOnlyList<string> orderedResources, int timeoutMilliseconds, CancellationToken ct)
+    {
+        if (transaction.Connection != connection || orderedResources is null || orderedResources.Count > 51
+            || timeoutMilliseconds is < 0 or > 30000)
+            throw new TenantContractException("transaction_lock_invalid");
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var resource in orderedResources)
+        {
+            if (string.IsNullOrEmpty(resource) || resource.Length > 255 || resource.Contains('|')
+                || !seen.Add(resource))
+                throw new TenantContractException("transaction_lock_invalid");
+        }
+        if (orderedResources.Count == 0) return;
+        await using var command = SqlOperations.Command(connection, """
+            SET NOCOUNT ON;
+            DECLARE @remaining nvarchar(max) = @resources;
+            DECLARE @separator int;
+            DECLARE @resource nvarchar(255);
+            DECLARE @result int = 0;
+            WHILE DATALENGTH(@remaining) > 0
+            BEGIN
+                SET @separator = CHARINDEX(N'|', @remaining);
+                IF @separator = 0
+                BEGIN
+                    SET @resource = @remaining;
+                    SET @remaining = N'';
+                END
+                ELSE
+                BEGIN
+                    SET @resource = LEFT(@remaining, @separator - 1);
+                    SET @remaining = SUBSTRING(@remaining, @separator + 1, 2147483647);
+                END
+                EXEC @result = sys.sp_getapplock @Resource = @resource, @LockMode = 'Shared',
+                    @LockOwner = 'Transaction', @LockTimeout = @timeout, @DbPrincipal = 'public';
+                IF @result < 0 BREAK;
+            END
+            SELECT @result;
+            """, ("@resources", string.Join("|", orderedResources)), ("@timeout", timeoutMilliseconds));
+        command.Transaction = transaction;
+        var result = await command.ExecuteScalarAsync(ct);
+        if (result is not int code || code < 0)
+            throw new TenantContractException(result is int value && value == -1
+                ? "write_gate_timeout" : "transaction_lock_unavailable");
+    }
+
     public static async Task AcquireAsync(SqlConnection connection, SqlTransaction transaction, string resource, bool exclusive, int timeoutMilliseconds, CancellationToken ct)
     {
         if (transaction.Connection != connection || resource.Length is < 1 or > 255 || timeoutMilliseconds is < 0 or > 30000)
