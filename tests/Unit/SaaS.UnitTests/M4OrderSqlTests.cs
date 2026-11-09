@@ -31,6 +31,9 @@ public sealed class M4OrderSqlTests
             Assert.Equal(0, observed.Open.Errors);
             Assert.Equal(0, observed.Pending);
         }
+        // RED: initial, resource-locked and before-audit checks remain fresh.
+        // An extra intermediate check while holding the command lock is redundant.
+        Assert.Equal(3, h.AccessReadCount);
         Assert.False(result.Replayed); Assert.Equal(OrderStatus.Draft, result.Order.Status);
         Assert.Equal(1, result.Order.Revision); Assert.False(result.Order.ApprovalRequired);
         Assert.Equal(h.Actor, result.Order.CreatedBy); Assert.Equal(8, Convert.FromBase64String(result.Order.Version).Length);
@@ -168,6 +171,29 @@ public sealed class M4OrderSqlTests
         h.Deny("Orders.Create");
         await Error(403, () => h.Service().ExecuteAsync(Create(), Ct));
         await Error(403, () => h.Service().ExecuteAsync(Create("SO-DIFFERENT"), Ct));
+        await h.CountsAsync(1, 2, 2, Ct);
+
+        // A current Deny arriving after the initial partition read must still
+        // block new work at the resource-locked source recheck, not on a cached Allow.
+        h.Deny();
+        var after = h.AccessReadCount;
+        h.OnAccessRead = ordinal => { if (ordinal == after + 2) h.Deny("Orders.Create"); };
+        await Error(403, () => h.Service().ExecuteAsync(Create("SO-REVOKED-RACE", "revoke-after-first-read"), Ct));
+        h.OnAccessRead = null;
+        await h.CountsAsync(1, 2, 2, Ct);
+
+        // Tenant/actor/client context drift must fail before any new receipt
+        // or revision is disclosed/committed, including after a contested lock.
+        h.Deny();
+        var originalClient = h.Client;
+        after = h.AccessReadCount;
+        h.OnAccessRead = ordinal => { if (ordinal == after + 2) h.Client = "changed-client"; };
+        var changed = await Assert.ThrowsAsync<AccessDeniedException>(() =>
+            h.Service().ExecuteAsync(Create("SO-CLIENT-RACE", "client-after-first-read"), Ct));
+        Assert.Equal(401, changed.StatusCode);
+        Assert.Equal("credential_changed", changed.Code);
+        h.OnAccessRead = null;
+        h.Client = originalClient;
         await h.CountsAsync(1, 2, 2, Ct);
     }
     [Fact]
@@ -314,6 +340,9 @@ internal sealed class M4SqlHarness : IAsyncDisposable
     internal bool ApprovalEntitled { get; set; }
     internal bool OrdersEntitled { get; set; } = true;
     internal bool SourceUnavailable { get; set; }
+    // Test-only phase observer; no production authority decisions derive from this.
+    internal int AccessReadCount;
+    internal Action<int>? OnAccessRead;
     internal M4Clock Clock { get; } = new();
     internal M4ApprovalFixture? Handler { get; private set; }
     private string[] _denied = [];
@@ -323,6 +352,7 @@ internal sealed class M4SqlHarness : IAsyncDisposable
     {
         ct.ThrowIfCancellationRequested();
         Assert.Same(tx.Connection, tx.Transaction.Connection);
+        OnAccessRead?.Invoke(Interlocked.Increment(ref AccessReadCount));
         if (SourceUnavailable) throw new IOException("Fixture current-authority outage");
         var access = M4PolicyTests.Access(Actor, _denied.Select(x => new UserOverride(Actor, x, PermissionEffect.Deny)).ToArray(), Target.Id);
         var entitlements = new HashSet<string>();
