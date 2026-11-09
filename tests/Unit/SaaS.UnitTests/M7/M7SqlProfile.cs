@@ -54,6 +54,8 @@ internal sealed class M7SqlProfile : IObserver<DiagnosticListener>, IObserver<Ke
             _maxima[kind] = Math.Max(_maxima[kind], ms);
         }
     }
+    // RED scaffold: stage attribution is not implemented until the GREEN commit.
+    internal M7SqlStageMetric[] SnapshotStages() => [];
     internal M7SqlProfileReport Snapshot()
     {
         lock (_gate)
@@ -79,3 +81,5 @@ internal sealed class M7SqlProfile : IObserver<DiagnosticListener>, IObserver<Ke
 }
 internal sealed record M7SqlMetric(int Count, int Errors, double TotalMs, double MaxMs);
 internal sealed record M7SqlProfileReport(M7SqlMetric Open, M7SqlMetric Command, int Pending, int Orphans, int Duplicates);
+
+internal sealed record M7SqlStageMetric(string Stage, M7SqlMetric Open, M7SqlMetric Command);

@@ -32,6 +32,26 @@ public sealed class M7SqlProfileTests
         Assert.DoesNotContain("Sensitive", JsonSerializer.Serialize(result));
     }
     [Fact]
+    public void SQL_diagnostics_attribute_operation_to_ambient_bounded_activity_without_sensitive_payload()
+    {
+        using var listener = new DiagnosticListener("m7-stage-" + Guid.NewGuid());
+        using var profile = new M7SqlProfile(listener.Name);
+        using var stages = new M7StageProfile();
+        using var source = new ActivitySource("SaaS.RequestStages");
+        var tick = Stopwatch.GetTimestamp();
+        using (source.StartActivity("acl.snapshot"))
+        {
+            var open = Guid.NewGuid(); var command = Guid.NewGuid();
+            listener.Write(Prefix + "ConnectionOpenBefore", new Payload(open, tick));
+            listener.Write(Prefix + "ConnectionOpenAfter", new Payload(open, tick + Stopwatch.Frequency));
+            listener.Write(Prefix + "CommandBefore", new Payload(command, tick));
+            listener.Write(Prefix + "CommandAfter", new Payload(command, tick + Stopwatch.Frequency));
+        }
+        Assert.Contains(profile.SnapshotStages(), stage => stage.Stage == "acl.snapshot"
+            && stage.Open.Count == 1 && stage.Command.Count == 1);
+        Assert.DoesNotContain("ConnectionString", JsonSerializer.Serialize(profile.SnapshotStages()), StringComparison.Ordinal);
+    }
+    [Fact]
     public void Collector_rejects_duplicate_orphan_and_unrelated_events_and_stops_on_dispose()
     {
         using var listener = new DiagnosticListener("m7-test-" + Guid.NewGuid());
