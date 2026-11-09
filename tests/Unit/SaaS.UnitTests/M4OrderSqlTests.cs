@@ -352,7 +352,8 @@ internal sealed class M4SqlHarness : IAsyncDisposable
     {
         ct.ThrowIfCancellationRequested();
         Assert.Same(tx.Connection, tx.Transaction.Connection);
-        OnAccessRead?.Invoke(Interlocked.Increment(ref AccessReadCount));
+        var ordinal = Interlocked.Increment(ref AccessReadCount);
+        OnAccessRead?.Invoke(ordinal);
         if (SourceUnavailable) throw new IOException("Fixture current-authority outage");
         var access = M4PolicyTests.Access(Actor, _denied.Select(x => new UserOverride(Actor, x, PermissionEffect.Deny)).ToArray(), Target.Id);
         var entitlements = new HashSet<string>();
