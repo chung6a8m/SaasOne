@@ -274,7 +274,11 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         var loaded = await db.Orders.Where(x => x.Id == id).Select(row => new
         {
             Row = row,
-            Latest = db.Revisions.AsNoTracking()
+            // Do not apply AsNoTracking inside this projection. EF may apply
+            // no-tracking to the WHOLE query, detaching Row and silently skipping
+            // the optimistic-concurrency UPDATE on Submit/Edit/Approve.
+            // The revision is only read; the DbContext is request/transaction local.
+            Latest = db.Revisions
                 .Where(revision => revision.OrderId == row.Id && revision.Revision == row.Revision)
                 .SingleOrDefault(),
             HistoryCount = db.Revisions.LongCount(revision => revision.OrderId == row.Id),
