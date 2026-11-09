@@ -5,9 +5,8 @@ using Microsoft.Data.SqlClient;
 using Xunit;
 namespace SaaS.UnitTests;
 
-[Collection("M1 SQL")]
-[Trait("Category", "SqlM1")]
-public sealed class M7ConnectionDiagnosticsTests(M1SqlFixture fixture, ITestOutputHelper output) : IClassFixture<M1SqlFixture>
+// Share M1SqlTests' class fixture; a second fixture must not bootstrap the same database.
+public sealed partial class M1SqlTests
 {
     [Fact]
     public async Task Unpooled_open_diagnostic_preserves_fresh_logins_and_reports_both_scheduling_paths()
@@ -30,7 +29,7 @@ public sealed class M7ConnectionDiagnosticsTests(M1SqlFixture fixture, ITestOutp
             Assert.Equal(0, observed.Pending);
             rows.Add(row);
         }
-        output.WriteLine("M7_UNPOOLED_PROBE " + JsonSerializer.Serialize(new
+        TestContext.Current.TestOutputHelper!.WriteLine("M7_UNPOOLED_PROBE " + JsonSerializer.Serialize(new
         {
             schemaVersion = 1,
             acceptance = "NOT_ASSESSED",
