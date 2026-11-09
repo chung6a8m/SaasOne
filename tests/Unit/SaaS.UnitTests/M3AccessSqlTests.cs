@@ -1,4 +1,5 @@
 using Microsoft.Data.SqlClient;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using SaaS.AccessControl;
 using SaaS.AccessControl.Data;
@@ -38,7 +39,13 @@ public sealed class M3AccessSqlTests
         Assert.Equal(403, (await Assert.ThrowsAsync<AccessDeniedException>(() => service.ChangeAsync(new(Guid.NewGuid(), 1, 1, self), Ct))).StatusCode);
         var elevated = fixture.Document with { Assignments = [.. fixture.Document.Assignments, new(fixture.Other, fixture.Document.Roles[0].Id)] };
         Assert.Equal(403, (await Assert.ThrowsAsync<AccessDeniedException>(() => service.ChangeAsync(new(Guid.NewGuid(), 1, 1, elevated), Ct))).StatusCode);
-        Assert.Equal(1, (await service.ReadAsync(Ct)).Snapshot.Revision);
+        using (var commands = new AclReadCommandCounter(new SqlConnectionStringBuilder(fixture.Target.Connection).InitialCatalog))
+        {
+            Assert.Equal(1, (await service.ReadAsync(Ct)).Snapshot.Revision);
+            // State, Roles, RoleGrants, Assignments and UserGrants remain five fresh
+            // results; network/client-command count must be one. No ACL cache.
+            Assert.Equal(1, commands.Count);
+        }
     }
 
     [Fact]
@@ -113,6 +120,44 @@ public sealed class M3AccessSqlTests
         await using (var sql = await SqlOperations.OpenAsync(fixture.Target.Connection, Ct))
             await SqlOperations.ExecuteAsync(sql, "DROP TABLE access.UserGrants", Ct);
         Assert.Equal(503, (await Assert.ThrowsAsync<AccessDeniedException>(() => fixture.Service(fixture.Manager).ReadAsync(Ct))).StatusCode);
+    }
+
+    // Test-only query count. Inspect fixed table names in memory; export neither
+    // SQL text, row values, parameters, database names nor connection secrets.
+    private sealed class AclReadCommandCounter : IObserver<DiagnosticListener>,
+        IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly string _database;
+        private readonly IDisposable _listeners;
+        private readonly List<IDisposable> _subscriptions = [];
+        private int _count;
+        internal AclReadCommandCounter(string database)
+        {
+            _database = database;
+            _listeners = DiagnosticListener.AllListeners.Subscribe(this);
+        }
+        internal int Count => Volatile.Read(ref _count);
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "SqlClientDiagnosticListener")
+                _subscriptions.Add(listener.Subscribe(this,
+                    name => name == "Microsoft.Data.SqlClient.WriteCommandBefore"));
+        }
+        public void OnNext(KeyValuePair<string, object?> entry)
+        {
+            if (entry.Key != "Microsoft.Data.SqlClient.WriteCommandBefore"
+                || entry.Value?.GetType().GetProperty("Command")?.GetValue(entry.Value) is not SqlCommand command
+                || !string.Equals(command.Connection?.Database, _database, StringComparison.Ordinal)
+                || !command.CommandText.Contains("[access].[", StringComparison.Ordinal)) return;
+            Interlocked.Increment(ref _count);
+        }
+        public void OnError(Exception error) { }
+        public void OnCompleted() { }
+        public void Dispose()
+        {
+            _listeners.Dispose();
+            foreach (var subscription in _subscriptions) subscription.Dispose();
+        }
     }
 
     private sealed class Fixture(IsolatedCustomerDatabase target) : IAsyncDisposable
