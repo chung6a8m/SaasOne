@@ -84,6 +84,39 @@ public sealed class M4OrderListSqlTests
         Assert.Equal(4, queries.Count);
     }
 
+
+    [Fact]
+    public async Task Full_page_batches_shared_resource_locks_into_one_client_SQL_command()
+    {
+        await using var h = await M4SqlHarness.CreateAsync(Ct);
+        await SeedAsync(h, 51, 0);
+        using var calls = new ResourceLockCommandCounter();
+        var page = await h.Service().ListAsync(0, Ct);
+        Assert.Equal(50, page.Items.Length);
+        Assert.True(page.HasMore);
+        // 51 actual per-resource locks still must be acquired; only network round trips are batched.
+        Assert.Equal(1, calls.Count);
+    }
+
+    [Fact]
+    public async Task Full_page_shared_locks_still_wait_for_a_writer_and_release_on_completion()
+    {
+        await using var h = await M4SqlHarness.CreateAsync(Ct);
+        var rows = await SeedAsync(h, 2, 0);
+        await using var sql = await SqlOperations.OpenAsync(h.Target.Connection, Ct);
+        await using var transaction = (SqlTransaction)await sql.BeginTransactionAsync(Ct);
+        await SqlTransactionLocks.AcquireAsync(sql, transaction, "orders-resource:" + rows[0].Id.ToString("N"), true, 30000, Ct);
+        var reading = h.Service().ListAsync(0, Ct);
+        try
+        {
+            await Task.Delay(200, Ct);
+            Assert.False(reading.IsCompleted, "Reader must not bypass an exclusive order resource lock.");
+        }
+        finally { await transaction.RollbackAsync(CancellationToken.None); }
+        var page = await reading;
+        Assert.Equal(2, page.Items.Length);
+    }
+
     private static async Task<OrderRow[]> SeedAsync(M4SqlHarness h, int owned, int other)
     {
         var timestamp = DateTimeOffset.UtcNow;
@@ -113,6 +146,43 @@ public sealed class M4OrderListSqlTests
         }));
         await db.SaveChangesAsync(Ct);
         return rows;
+    }
+
+
+    // Test-only observer. Inspect fixed lock command metadata in-memory; export no SQL, IDs or parameter values.
+    private sealed class ResourceLockCommandCounter : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly IDisposable _listeners;
+        private readonly List<IDisposable> _subscriptions = [];
+        private int _count;
+
+        internal ResourceLockCommandCounter() => _listeners = DiagnosticListener.AllListeners.Subscribe(this);
+        internal int Count => Volatile.Read(ref _count);
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "SqlClientDiagnosticListener")
+                _subscriptions.Add(listener.Subscribe(this, key => key == "Microsoft.Data.SqlClient.WriteCommandBefore"));
+        }
+        public void OnNext(KeyValuePair<string, object?> value)
+        {
+            if (value.Key != "Microsoft.Data.SqlClient.WriteCommandBefore"
+                || value.Value?.GetType().GetProperty("Command")?.GetValue(value.Value) is not SqlCommand command)
+                return;
+            string? resource = null;
+            if (command.Parameters.Contains("@resource"))
+                resource = command.Parameters["@resource"].Value as string;
+            else if (command.Parameters.Contains("@resources"))
+                resource = command.Parameters["@resources"].Value as string;
+            if (resource?.StartsWith("orders-resource:", StringComparison.Ordinal) == true)
+                Interlocked.Increment(ref _count);
+        }
+        public void OnError(Exception error) { }
+        public void OnCompleted() { }
+        public void Dispose()
+        {
+            _listeners.Dispose();
+            foreach (var subscription in _subscriptions) subscription.Dispose();
+        }
     }
 
     private sealed class OrdersReadCounter : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
