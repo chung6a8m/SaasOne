@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using OpenIddict.Abstractions;
 using SaaS.Identity;
+using SaaS.Tenancy.Data;
 using Xunit;
 namespace SaaS.UnitTests;
 
