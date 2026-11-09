@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using SaaS.Abstractions.Tenancy;
 using SaaS.AccessControl;
 using SaaS.Auditing;
 using SaaS.Orders;
+using SaaS.Orders.Data;
 using SaaS.Tenancy.Operations;
 using Xunit;
 namespace SaaS.UnitTests;
@@ -37,7 +40,14 @@ public sealed class M4OrderSqlTests
         Assert.False(result.Replayed); Assert.Equal(OrderStatus.Draft, result.Order.Status);
         Assert.Equal(1, result.Order.Revision); Assert.False(result.Order.ApprovalRequired);
         Assert.Equal(h.Actor, result.Order.CreatedBy); Assert.Equal(8, Convert.FromBase64String(result.Order.Version).Length);
-        Assert.Equal(result.Order, await h.Service().GetAsync(result.Order.Id, Ct));
+        // RED: the same transaction-owned resource lock protects all existing
+        // integrity facts; the Orders row/latest/count/marker SELECTs must take
+        // one command, not four sequential SQL round trips.
+        using (var reads = new OrderHistorySelectCounter(h.Target.Connection))
+        {
+            Assert.Equal(result.Order, await h.Service().GetAsync(result.Order.Id, Ct));
+            Assert.Equal(1, reads.Count);
+        }
         await h.CountsAsync(1, 1, 1, Ct);
     }
     [Fact]
@@ -45,10 +55,28 @@ public sealed class M4OrderSqlTests
     {
         await using var h = await M4SqlHarness.CreateAsync(Ct);
         var created = await h.Service().ExecuteAsync(Create(), Ct);
-        var result = await h.Service().ExecuteAsync(M4PolicyTests.Command(created.Order), Ct);
+        OrderCommandResult result;
+        using (var reads = new OrderHistorySelectCounter(h.Target.Connection))
+        {
+            result = await h.Service().ExecuteAsync(M4PolicyTests.Command(created.Order), Ct);
+            // Updating an Order must also load its tracked row and full
+            // history summary in exactly one SQL SELECT.
+            Assert.Equal(1, reads.Count);
+        }
         Assert.Equal(OrderStatus.Confirmed, result.Order.Status); Assert.Equal(2, result.Order.Revision);
         Assert.False(result.Order.ApprovalRequired); Assert.NotEqual(created.Order.Version, result.Order.Version);
         await h.CountsAsync(1, 2, 2, Ct);
+        // Historic obligations are checked across *all* revisions, not only
+        // the latest snapshot or the number of revisions. A corrupt old marker
+        // must fail closed even when latest row/version/count still match.
+        await using (var sql = await SqlOperations.OpenAsync(h.Target.Connection, Ct))
+            await SqlOperations.ExecuteAsync(sql,
+                "UPDATE [orders].[Revisions] SET [ApprovalRequired] = 1 WHERE [OrderId] = @id AND [Revision] = 1",
+                Ct, ("@id", created.Order.Id));
+        var invalid = await Assert.ThrowsAsync<AccessDeniedException>(() =>
+            h.Service().GetAsync(result.Order.Id, Ct));
+        Assert.Equal(503, invalid.StatusCode);
+        Assert.Equal("order_history_invalid", invalid.Code);
     }
     [Fact]
     public async Task Lost_create_response_replays_the_original_result_without_duplicate_side_effects()
@@ -322,6 +350,53 @@ public sealed class M4OrderSqlTests
         await Error(503, () => h.Service().ExecuteAsync(Create(), Ct));
         await Error(503, () => h.Service().ExecuteAsync(Create("SO-NEW", "new-create"), Ct));
         await h.CountsAsync(1, 1, 1, Ct);
+    }
+    // Test-only EF Core SQL observer: count Orders/Revision SELECT round
+    // trips, not application schema, gate, authority or row mutation commands.
+    // No SQL text, IDs or parameter values are ever exported.
+    private sealed class OrderHistorySelectCounter : IObserver<DiagnosticListener>,
+        IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly string _database;
+        private readonly IDisposable _listeners;
+        private readonly List<IDisposable> _subscriptions = [];
+        private int _count;
+
+        internal OrderHistorySelectCounter(string connection)
+        {
+            _database = new SqlConnectionStringBuilder(connection).InitialCatalog;
+            _listeners = DiagnosticListener.AllListeners.Subscribe(this);
+        }
+
+        internal int Count => Volatile.Read(ref _count);
+
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == DbLoggerCategory.Name)
+                _subscriptions.Add(listener.Subscribe(this,
+                    key => key == RelationalEventId.CommandExecuted.Name));
+        }
+
+        public void OnNext(KeyValuePair<string, object?> entry)
+        {
+            if (entry.Key != RelationalEventId.CommandExecuted.Name
+                || entry.Value is not CommandExecutedEventData data
+                || data.Context is not OrdersDbContext
+                || !string.Equals(data.Command.Connection?.Database, _database, StringComparison.OrdinalIgnoreCase)
+                || !data.Command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                || !(data.Command.CommandText.Contains("[orders].[Orders]", StringComparison.OrdinalIgnoreCase)
+                    || data.Command.CommandText.Contains("[orders].[Revisions]", StringComparison.OrdinalIgnoreCase)))
+                return;
+            Interlocked.Increment(ref _count);
+        }
+
+        public void OnError(Exception error) { }
+        public void OnCompleted() { }
+        public void Dispose()
+        {
+            _listeners.Dispose();
+            foreach (var subscription in _subscriptions) subscription.Dispose();
+        }
     }
 }
 
