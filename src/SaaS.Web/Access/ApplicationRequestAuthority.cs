@@ -38,7 +38,15 @@ public sealed class ApplicationRequestAuthority
         try
         {
             IdentityFamily family;
-            if (IsApi) family = await IdentityProtocol.AuthenticateBearerAsync(_context, Tenant.TenantId);
+            FreshTenantAuthority current;
+            if (IsApi)
+            {
+                // The API still revalidates the platform tenant AFTER its fresh
+                // native bearer checks, on the same one-validation platform login.
+                var validation = await IdentityProtocol.AuthenticateBearerForApplicationAsync(_context, Tenant.TenantId);
+                family = validation.Family;
+                current = validation.Current;
+            }
             else
             {
                 var result = await _context.AuthenticateAsync(IdentityNames.TenantCookie);
@@ -47,10 +55,13 @@ public sealed class ApplicationRequestAuthority
                 family = await _context.RequestServices.GetRequiredService<IdentityAuthority>()
                     .ValidateAsync(IdentityAuthority.RequiredId(result.Principal, IdentityNames.Family), Tenant.TenantId, true, ct);
                 IdentityProtocol.DemandClaims(result.Principal, family);
+                // Web/session behavior retains the independent new platform source.
+                await using var platform = TenancyConnections.PlatformContext(Connections.Platform("runtime"));
+                var tenant = await platform.Tenants.AsNoTracking().SingleAsync(x => x.Id == Tenant.TenantId, ct);
+                current = new(tenant.Plan, tenant.RegistryVersion, tenant.AuthorizationGeneration,
+                    tenant.RetiredAt, tenant.Status());
             }
-            await using var platform = TenancyConnections.PlatformContext(Connections.Platform("runtime"));
-            var current = await platform.Tenants.AsNoTracking().SingleAsync(x => x.Id == Tenant.TenantId, ct);
-            if (current.RetiredAt is not null || !TenantPolicy.IsOperational(current.Status(), _context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()))
+            if (current.RetiredAt is not null || !TenantPolicy.IsOperational(current.Status, _context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()))
                 throw new AccessDeniedException(403, "tenant_unavailable");
             if (current.RegistryVersion != family.RegistryVersion) throw new AccessDeniedException(401, "credential_changed");
             await using var sql = await SqlOperations.OpenAsync(Connection, ct);

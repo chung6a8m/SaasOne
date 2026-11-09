@@ -1,10 +1,16 @@
 using System.Security.Claims;
+using SaaS.Abstractions.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Domain;
 using SaaS.Tenancy.Operations;
 
 namespace SaaS.Identity;
+
+// Only nonsecret, fresh platform fields; never a tracked EF tenant or cached Allow.
+public sealed record FreshTenantAuthority(string Plan, long RegistryVersion,
+    long AuthorizationGeneration, DateTimeOffset? RetiredAt, TenantStatus Status);
+public sealed record ValidatedBearerTenant(IdentityFamily Family, FreshTenantAuthority Current);
 
 /// <summary>Fresh platform reads on every authorization. A credential never selects a connection.</summary>
 public sealed class IdentityAuthority(TenancyConnections connections, IdentityDeployment deployment,
@@ -100,20 +106,31 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         return family;
     }
 
-    public Task<IdentityFamily> ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken ct)
-        => ValidateCoreAsync(familyId, routedTenantId, web, null, null, ct);
+    public async Task<IdentityFamily> ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken ct)
+        => (await ValidateCoreAsync(familyId, routedTenantId, web, null, null, false, ct)).Family;
 
     // This is used only after JWT signature, issuer, audience, lifetime and scope
     // validation. It returns a family solely AFTER all native checks succeed.
-    internal Task<IdentityFamily> ValidateBearerAsync(Guid familyId, Guid routedTenantId,
+    internal async Task<IdentityFamily> ValidateBearerAsync(Guid familyId, Guid routedTenantId,
         ClaimsPrincipal principal, string tokenId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(principal);
-        return ValidateCoreAsync(familyId, routedTenantId, false, principal, tokenId, ct);
+        return (await ValidateCoreAsync(familyId, routedTenantId, false, principal, tokenId, false, ct)).Family;
     }
 
-    private async Task<IdentityFamily> ValidateCoreAsync(Guid familyId, Guid routedTenantId, bool web,
-        ClaimsPrincipal? bearerPrincipal, string? tokenId, CancellationToken ct)
+    // Used solely by the product API. The post-native tenant SELECT is fresh
+    // on the same owned unpooled platform connection, not a cached identity.
+    internal async Task<ValidatedBearerTenant> ValidateBearerForApplicationAsync(Guid familyId, Guid routedTenantId,
+        ClaimsPrincipal principal, string tokenId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        var result = await ValidateCoreAsync(familyId, routedTenantId, false, principal, tokenId, true, ct);
+        return new(result.Family, result.Current ?? throw new InvalidOperationException("Current tenant source unavailable."));
+    }
+
+    private async Task<(IdentityFamily Family, FreshTenantAuthority? Current)> ValidateCoreAsync(
+        Guid familyId, Guid routedTenantId, bool web, ClaimsPrincipal? bearerPrincipal,
+        string? tokenId, bool includeCurrentTenant, CancellationToken ct)
     {
         using var stage = SaaSStageActivity.Start(SaaSStage.IdentityFresh);
         await using var db = Open();
@@ -147,7 +164,17 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
             await issuerStore.ValidateBearerAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId,
                 tokenId ?? "", () => IdentityProtocol.DemandClaims(bearerPrincipal, family), ct);
         if (web) await TouchAsync(db, session, ct);
-        return family;
+        FreshTenantAuthority? current = null;
+        if (includeCurrentTenant)
+        {
+            // A SECOND real tenant SELECT, intentionally after the native checks.
+            // The earlier identity tenant query never becomes a cached plan/Allow.
+            // AsNoTracking prevents reusing an EF identity-map tenant.
+            var latest = await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == routedTenantId, ct);
+            current = new(latest.Plan, latest.RegistryVersion, latest.AuthorizationGeneration,
+                latest.RetiredAt, latest.Status());
+        }
+        return (family, current);
     }
 
     public static Guid RequiredId(ClaimsPrincipal principal, string name) =>

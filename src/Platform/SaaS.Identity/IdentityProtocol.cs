@@ -111,6 +111,24 @@ public static class IdentityProtocol
 
     public static async Task<IdentityFamily> AuthenticateBearerAsync(HttpContext context, Guid routedTenantId)
     {
+        var principal = await ValidateBearerPrincipalAsync(context, routedTenantId);
+        return await context.RequestServices.GetRequiredService<IdentityAuthority>().ValidateBearerAsync(
+            IdentityAuthority.RequiredId(principal, IdentityNames.Family), routedTenantId, principal,
+            principal.FindFirst(OpenIddictConstants.Claims.Private.TokenId)?.Value ?? "", context.RequestAborted);
+    }
+
+    // Opt-in only for trusted product API: return a fresh post-native tenant plan
+    // from the same one-validation platform login. No HTTP input selects the source.
+    public static async Task<ValidatedBearerTenant> AuthenticateBearerForApplicationAsync(HttpContext context, Guid routedTenantId)
+    {
+        var principal = await ValidateBearerPrincipalAsync(context, routedTenantId);
+        return await context.RequestServices.GetRequiredService<IdentityAuthority>().ValidateBearerForApplicationAsync(
+            IdentityAuthority.RequiredId(principal, IdentityNames.Family), routedTenantId, principal,
+            principal.FindFirst(OpenIddictConstants.Claims.Private.TokenId)?.Value ?? "", context.RequestAborted);
+    }
+
+    private static async Task<ClaimsPrincipal> ValidateBearerPrincipalAsync(HttpContext context, Guid routedTenantId)
+    {
         var header = context.Request.Headers.Authorization.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) || header.Length > 32775)
             throw new IdentityDeniedException(401, "bearer_required");
@@ -128,12 +146,7 @@ public static class IdentityProtocol
         var principal = new ClaimsPrincipal(result.ClaimsIdentity);
         if (!principal.FindAll("scope").SelectMany(x => x.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Contains(IdentityNames.Scope, StringComparer.Ordinal))
             throw new IdentityDeniedException(403, "scope_required");
-        var authority = context.RequestServices.GetRequiredService<IdentityAuthority>();
-        // All platform/native/claims/token checks remain source-fresh and ordered.
-        // The native checks share one *per-validation* scope, not a cached issuer.
-        return await authority.ValidateBearerAsync(
-            IdentityAuthority.RequiredId(principal, IdentityNames.Family), routedTenantId, principal,
-            principal.FindFirst(OpenIddictConstants.Claims.Private.TokenId)?.Value ?? "", context.RequestAborted);
+        return principal;
     }
 
     public static async Task WriteErrorAsync(HttpContext context, int status, string code)
