@@ -56,7 +56,7 @@ public sealed class OrdersEndpoints : ITenantApplicationEndpoints
                     AuthenticatedApplicationAccess? identity = null;
                     var access = await TransactionAccessReader.ReadAsync(authority.Tenant.TenantId, tx, async currentToken =>
                     {
-                        identity = await authority.ReadAsync(currentToken);
+                        identity = await authority.ReadAsync(currentToken, tx);
                         return identity.Current;
                     }, token);
                     return new(access.Current, access.Snapshot, identity!.ClientId);

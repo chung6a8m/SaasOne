@@ -1,4 +1,6 @@
+using System.Data;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using OrchardCore.Environment.Shell;
 using SaaS.Abstractions.Tenancy;
@@ -33,7 +35,7 @@ public sealed class ApplicationRequestAuthority
         Connection = Connections.Customer(Tenant.TenantId, "runtime");
         IsApi = (context.Request.Path.Value ?? "").StartsWith("/api/", StringComparison.Ordinal);
     }
-    public async Task<AuthenticatedApplicationAccess> ReadAsync(CancellationToken ct)
+    public async Task<AuthenticatedApplicationAccess> ReadAsync(CancellationToken ct, TenantTransaction? borrowedTransaction = null)
     {
         try
         {
@@ -64,8 +66,36 @@ public sealed class ApplicationRequestAuthority
             if (current.RetiredAt is not null || !TenantPolicy.IsOperational(current.Status, _context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()))
                 throw new AccessDeniedException(403, "tenant_unavailable");
             if (current.RegistryVersion != family.RegistryVersion) throw new AccessDeniedException(401, "credential_changed");
-            await using var sql = await SqlOperations.OpenAsync(Connection, ct);
-            await ApplicationAccessProfile.VerifyAsync(Tenant.TenantId, current.Plan, sql, ct);
+            if (borrowedTransaction is null)
+            {
+                // Initial request authority still owns an independently fresh
+                // unpooled customer login. Never reuse this across operations.
+                await using var sql = await SqlOperations.OpenAsync(Connection, ct);
+                await ApplicationAccessProfile.VerifyAsync(Tenant.TenantId, current.Plan, sql, ct);
+            }
+            else
+            {
+                // Only trusted, already-routed Orders code can supply this
+                // per-operation customer transaction. Reject another database,
+                // server, runtime role or detached/closed transaction.
+                if (borrowedTransaction.Connection is not SqlConnection sql
+                    || borrowedTransaction.Transaction is not SqlTransaction transaction
+                    || !ReferenceEquals(sql, transaction.Connection)
+                    || sql.State != ConnectionState.Open)
+                    throw new AccessDeniedException(503, "transaction_mismatch");
+                var selected = new SqlConnectionStringBuilder(Connection);
+                var actual = new SqlConnectionStringBuilder(sql.ConnectionString);
+                if (!string.Equals(actual.DataSource, selected.DataSource, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(actual.InitialCatalog, selected.InitialCatalog, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(actual.UserID, selected.UserID, StringComparison.OrdinalIgnoreCase)
+                    || actual.Pooling != selected.Pooling
+                    || !string.Equals(sql.Database, selected.InitialCatalog, StringComparison.OrdinalIgnoreCase))
+                    throw new AccessDeniedException(503, "transaction_mismatch");
+                // Re-read ALL application histories/columns/current plan inside
+                // the caller-owned transaction. Do not cache Allow or enlist a
+                // second context concurrently on the same connection.
+                await ApplicationAccessProfile.VerifyAsync(Tenant.TenantId, current.Plan, sql, transaction, ct);
+            }
             return new(new(Tenant.TenantId, family.GlobalUserId, current.AuthorizationGeneration, current.RegistryVersion,
                 ApplicationAccessProfile.Entitlements(current.Plan)), family.ClientId);
         }
