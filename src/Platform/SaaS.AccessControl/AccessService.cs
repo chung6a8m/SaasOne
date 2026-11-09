@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using SaaS.Abstractions.Tenancy;
 using SaaS.AccessControl.Data;
 using SaaS.Auditing;
@@ -124,17 +125,72 @@ internal static class AclRepository
     internal const string LockResource = "saas-acl-admin-v1";
     internal static async Task<AccessSnapshot> ReadAsync(AccessDbContext db, CancellationToken ct)
     {
-        var state = await db.State.AsNoTracking().SingleOrDefaultAsync(ct)
-            ?? throw new AccessDeniedException(503, "access_revalidation_required");
-        var roles = await db.Roles.AsNoTracking().Take(257).ToArrayAsync(ct);
-        var grants = await db.RoleGrants.AsNoTracking().Take(65537).ToArrayAsync(ct);
-        var assignments = await db.Assignments.AsNoTracking().Take(4097).ToArrayAsync(ct);
-        var users = await db.UserGrants.AsNoTracking().Take(4097).ToArrayAsync(ct);
+        // The caller already owns both this physical connection and its transaction.
+        // A fresh, transaction-scoped shared/exclusive ACL lock is held by every caller.
+        if (db.Database.GetDbConnection() is not SqlConnection connection
+            || db.Database.CurrentTransaction?.GetDbTransaction() is not SqlTransaction transaction
+            || !ReferenceEquals(transaction.Connection, connection))
+            throw new AccessDeniedException(503, "access_revalidation_required");
+
+        // Exactly the same five bounded reads as the former EF queries, but returned
+        // as five result sets in one command. No ACL snapshot is cached or skipped.
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT TOP (2) [Id], [TenantId], [SecurityGeneration], [Revision], [AppliedOperationId], [AclHash]
+            FROM [access].[State];
+            SELECT TOP (257) [Id], [Name] FROM [access].[Roles];
+            SELECT TOP (65537) [RoleId], [Permission], [Effect] FROM [access].[RoleGrants];
+            SELECT TOP (4097) [UserId], [RoleId] FROM [access].[Assignments];
+            SELECT TOP (4097) [UserId], [Permission], [Effect] FROM [access].[UserGrants];
+            """;
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new AccessDeniedException(503, "access_revalidation_required");
+        var state = new AclState
+        {
+            Id = reader.GetInt32(0), TenantId = reader.GetGuid(1),
+            SecurityGeneration = reader.GetInt64(2), Revision = reader.GetInt64(3),
+            AppliedOperationId = reader.GetGuid(4), AclHash = reader.GetString(5)
+        };
+        if (await reader.ReadAsync(ct))
+            throw new AccessDeniedException(503, "access_revalidation_required");
+
+        static async Task NextAsync(SqlDataReader reader, CancellationToken cancellationToken)
+        {
+            if (!await reader.NextResultAsync(cancellationToken))
+                throw new AccessDeniedException(503, "access_state_invalid");
+        }
+        await NextAsync(reader, ct);
+        var roles = new List<RoleRow>();
+        while (await reader.ReadAsync(ct))
+            roles.Add(new RoleRow { Id = reader.GetGuid(0), Name = reader.GetString(1) });
+        await NextAsync(reader, ct);
+        var grants = new List<RoleGrantRow>();
+        while (await reader.ReadAsync(ct))
+            grants.Add(new RoleGrantRow
+            {
+                RoleId = reader.GetGuid(0), Permission = reader.GetString(1),
+                Effect = (PermissionEffect)reader.GetInt32(2)
+            });
+        await NextAsync(reader, ct);
+        var assignments = new List<UserRoleRow>();
+        while (await reader.ReadAsync(ct))
+            assignments.Add(new UserRoleRow { UserId = reader.GetGuid(0), RoleId = reader.GetGuid(1) });
+        await NextAsync(reader, ct);
+        var users = new List<UserGrantRow>();
+        while (await reader.ReadAsync(ct))
+            users.Add(new UserGrantRow
+            {
+                UserId = reader.GetGuid(0), Permission = reader.GetString(1),
+                Effect = (PermissionEffect)reader.GetInt32(2)
+            });
+
         var document = new AclDocument(roles.Select(x => new RoleSpec(x.Id, x.Name,
             grants.Where(g => g.RoleId == x.Id).Select(g => new PermissionGrant(g.Permission, g.Effect)).ToArray())).ToArray(),
             assignments.Select(x => new RoleAssignment(x.UserId, x.RoleId)).ToArray(),
             users.Select(x => new UserOverride(x.UserId, x.Permission, x.Effect)).ToArray());
-        if (roles.Length > 256 || grants.Length > 65536 || assignments.Length > 4096 || users.Length > 4096
+        if (roles.Count > 256 || grants.Count > 65536 || assignments.Count > 4096 || users.Count > 4096
             || grants.Any(x => !roles.Any(r => r.Id == x.RoleId)) || document.Hash() != state.AclHash)
             throw new AccessDeniedException(503, "access_state_invalid");
         return new(state.TenantId, state.SecurityGeneration, state.Revision, document);
