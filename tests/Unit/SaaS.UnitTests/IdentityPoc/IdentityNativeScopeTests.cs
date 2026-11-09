@@ -59,6 +59,7 @@ public sealed partial class M2IdentityPocTests
                 request.Request.Headers.Authorization = "Bearer " + http.CapturedTokens["alpha"].AccessToken;
                 return await IdentityProtocol.AuthenticateBearerAsync(request, http.Tenant("alpha").Id);
             }
+            using var stageListener = new M7StageProfile();
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 using var profile = new M7SqlProfile();
