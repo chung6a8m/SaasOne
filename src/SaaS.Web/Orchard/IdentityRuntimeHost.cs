@@ -206,9 +206,10 @@ internal static class IdentityRuntimeBoundary
             TenantDatabaseVerifier.ValidateRegistration(tenant);
             var selected = connections.Customer(tenant.Id, "runtime");
             await using var customerSql = await SqlOperations.OpenAsync(selected, ct);
-            await TenantDatabaseVerifier.VerifyIdentityAsync(tenant, customerSql, ct);
-            var native = await FoundationProfile.ReadSnapshotAsync(customerSql, ct);
-            await TenantDatabaseVerifier.VerifyAsync(tenant, customerSql, native, ct);
+            // Identity/nonce must be validated BEFORE reading native metadata.
+            // Do not query identity a second time through VerifyAsync afterward.
+            await TenantDatabaseVerifier.ReadAndVerifyAsync(tenant, customerSql,
+                FoundationProfile.ReadSnapshotAsync, ct);
             if (local == "/health/ready" && !TenantPolicy.IsOperational(tenant.Status(), context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()))
                 throw new TenantContractException("tenant_not_operational");
             // For identity endpoints the authoritative family/membership/lifecycle
