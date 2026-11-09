@@ -32,10 +32,21 @@ public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassF
         }
         foreach (var source in fixture.Environment.Tenants)
         {
+            // RED: every current ACL authority read must retain both fresh
+            // platform/tenant and customer profile checks, but use one
+            // application-stage login after platform validation.
+            using var stageObserver = new M7StageProfile();
+            using var sqlObserver = new M7SqlProfile();
             using var own = await M7Http.SendAsync(fixture, tokens[source.Slug], source.Slug, "/" + orders[source.Slug].Id, ct: Ct);
             Assert.Equal(HttpStatusCode.OK, own.StatusCode);
             var actual = await own.Content.ReadFromJsonAsync<OrderView>(Ct);
             Assert.NotNull(actual); Assert.Equal("Customer " + source.Slug, actual.CustomerName);
+            var aclStages = stageObserver.Snapshot().Stages.Single(x => x.Stage == "acl.authorize");
+            var aclSql = sqlObserver.SnapshotStages().Single(x => x.Stage == "acl.authorize");
+            Assert.True(aclStages.Count > 0, "A real authority source recheck is required.");
+            Assert.Equal(aclStages.Count, aclSql.Open.Count);
+            Assert.Equal(0, aclSql.Open.Errors);
+            Assert.Equal(0, sqlObserver.Snapshot().Pending);
             foreach (var target in fixture.Environment.Tenants.Where(x => x.Id != source.Id))
             {
                 using var wrongToken = await M7Http.SendAsync(fixture, tokens[source.Slug], target.Slug, "/" + orders[target.Slug].Id, ct: Ct);
