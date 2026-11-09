@@ -46,12 +46,61 @@ public static class ApplicationAccessProfile
         await using var tenancy = Open(connection); await using var access = AccessDbContext.Open(connection);
         await using var audit = AuditDbContext.Open(connection); await using var orders = OrdersDbContext.Open(connection);
         await using var approvals = ApprovalsDbContext.Open(connection);
-        foreach (var db in new DbContext[] { tenancy, access, audit, orders, approvals }) await TenancyConnections.VerifySchemaAsync(db, ct);
+        // One fresh command reads every owner history; each owner's complete sequence
+        // still has to match the migrations in its own EF assembly exactly.
+        await VerifyModuleHistoriesAsync(connection,
+            [("tenancy", tenancy), ("access", access), ("audit", audit), ("orders", orders), ("approvals", approvals)], ct);
         await ApprovalHistoryVerifier.DemandColumnsAsync(connection, null, ct);
         var profile = await tenancy.ApplicationProfile.AsNoTracking().SingleAsync(ct);
         if (profile.Id != 1 || profile.TenantId != tenantId || profile.Version != 3 || profile.Plan != plan || profile.ManifestHash != Hash(plan))
             throw new TenantContractException("application_profile_mismatch");
     }
+    /// <summary>
+    /// Fresh, read-only check of all five independent EF migration histories.
+    /// The caller owns the already-open connection; this method never closes it,
+    /// assumes no transaction ownership and never caches an accepted history.
+    /// </summary>
+    private static async Task VerifyModuleHistoriesAsync(DbConnection connection,
+        (string Owner, DbContext Context)[] modules, CancellationToken ct)
+    {
+        // Expected identifiers remain EF's authoritative migration assembly metadata.
+        // The literal SQL below names only the five existing owned history tables.
+        var expected = modules.ToDictionary(x => x.Owner,
+            x => x.Context.Database.GetMigrations().Order(StringComparer.Ordinal).ToArray(),
+            StringComparer.Ordinal);
+        if (expected.Any(x => x.Value.Length == 0))
+            throw new TenantContractException("database_schema_mismatch");
+        var applied = modules.ToDictionary(x => x.Owner, _ => new List<string>(), StringComparer.Ordinal);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT N'tenancy' AS [Owner], [MigrationId] FROM [tenancy].[__EFMigrationsHistory]
+            UNION ALL SELECT N'access', [MigrationId] FROM [access].[__EFMigrationsHistory]
+            UNION ALL SELECT N'audit', [MigrationId] FROM [audit].[__EFMigrationsHistory]
+            UNION ALL SELECT N'orders', [MigrationId] FROM [orders].[__EFMigrationsHistory]
+            UNION ALL SELECT N'approvals', [MigrationId] FROM [approvals].[__EFMigrationsHistory];
+            """;
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var owner = reader.GetString(0);
+                if (!applied.TryGetValue(owner, out var entries))
+                    throw new TenantContractException("database_schema_mismatch");
+                entries.Add(reader.GetString(1));
+            }
+        }
+        catch (SqlException error) when (error.Number is 207 or 208)
+        {
+            // Missing owner table or MigrationId is schema drift, never an empty success.
+            throw new TenantContractException("database_schema_mismatch");
+        }
+        foreach (var item in expected)
+            if (!item.Value.SequenceEqual(applied[item.Key].Order(StringComparer.Ordinal), StringComparer.Ordinal))
+                throw new TenantContractException("database_schema_mismatch");
+    }
+
     public static async Task DemandMembershipsAsync(TenancyConnections connections, string role, Guid tenantId,
         IReadOnlyCollection<Guid> users, CancellationToken ct)
     {
