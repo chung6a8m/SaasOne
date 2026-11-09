@@ -137,16 +137,44 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         // Keep one physical login for this validation only, not an authority snapshot.
         // Every query below still executes; disposing this owned context closes it.
         await db.Database.OpenConnectionAsync(ct);
-        var family = await db.IdentityFamilies.AsNoTracking().SingleOrDefaultAsync(x => x.Id == familyId, ct);
+        // One fresh platform SQL SELECT for all seven keyed source entities.
+        // LEFT JOINs let the existing fail-closed checks distinguish a missing
+        // family/membership from missing mandatory related source data. Every
+        // table still participates; no principal/claim ever selects a source.
+        var authoritative = await (
+            from f in db.IdentityFamilies.AsNoTracking()
+            where f.Id == familyId
+            join s in db.IdentitySessions.AsNoTracking() on f.SessionId equals s.Id into sessions
+            from sessionRow in sessions.DefaultIfEmpty()
+            join a in db.IdentityAccounts.AsNoTracking() on f.GlobalUserId equals a.Id into accounts
+            from accountRow in accounts.DefaultIfEmpty()
+            join t in db.Tenants.AsNoTracking() on f.TenantId equals t.Id into tenants
+            from tenantRow in tenants.DefaultIfEmpty()
+            join m in db.IdentityMemberships.AsNoTracking()
+                on new { f.GlobalUserId, f.TenantId } equals new { m.GlobalUserId, m.TenantId } into members
+            from memberRow in members.DefaultIfEmpty()
+            join g in db.IdentityTenantSecurity.AsNoTracking() on f.TenantId equals g.TenantId into securities
+            from securityRow in securities.DefaultIfEmpty()
+            join c in db.IdentityClients.AsNoTracking() on f.ClientId equals c.ClientId into clients
+            from clientRow in clients.DefaultIfEmpty()
+            select new
+            {
+                Family = f, Session = sessionRow, Account = accountRow,
+                Tenant = tenantRow, Member = memberRow, Security = securityRow, Client = clientRow
+            }
+        ).SingleOrDefaultAsync(ct);
+        var family = authoritative?.Family;
         if (family is null || family.TenantId != routedTenantId || family.Issuer != deployment.Issuer.AbsoluteUri
             || family.RevokedAt is not null || family.SubscriptionExpiresAt <= Now || family.RefreshAbsoluteExpiresAt <= Now)
             throw new IdentityDeniedException(401, "grant_invalid");
-        var session = await db.IdentitySessions.AsNoTracking().SingleAsync(x => x.Id == family.SessionId, ct);
-        var account = await db.IdentityAccounts.AsNoTracking().SingleAsync(x => x.Id == family.GlobalUserId, ct);
-        var tenant = await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == family.TenantId, ct);
-        var member = await db.IdentityMemberships.AsNoTracking().SingleOrDefaultAsync(x => x.GlobalUserId == family.GlobalUserId && x.TenantId == family.TenantId, ct);
-        var security = await db.IdentityTenantSecurity.AsNoTracking().SingleAsync(x => x.TenantId == family.TenantId, ct);
-        var client = await db.IdentityClients.AsNoTracking().SingleAsync(x => x.ClientId == family.ClientId, ct);
+        // Prior SingleAsync calls failed closed on missing mandatory source
+        // records. Do not turn those failures into missing-membership or Allow.
+        var session = authoritative!.Session ?? throw new InvalidOperationException("identity_session_missing");
+        var account = authoritative.Account ?? throw new InvalidOperationException("identity_account_missing");
+        var tenant = authoritative.Tenant ?? throw new InvalidOperationException("identity_tenant_missing");
+        var member = authoritative.Member;
+        var security = authoritative.Security ?? throw new InvalidOperationException("identity_security_missing");
+        var client = authoritative.Client ?? throw new InvalidOperationException("identity_client_missing");
         if (session.RevokedAt is not null || !account.Enabled || account.Generation != family.AccountGeneration
             || session.AccountGeneration != account.Generation || session.GlobalUserId != family.GlobalUserId || session.TenantId != family.TenantId
             || session.Subject != family.Subject) throw new IdentityDeniedException(401, "session_invalid");
