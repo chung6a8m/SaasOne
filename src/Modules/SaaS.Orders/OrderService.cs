@@ -24,8 +24,10 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             var initial = await AccessAsync(tx, token);
             var partition = OrderPolicy.Partition(tenantId, initial.Current.UserId, initial.ClientId, request.Action, request.Key);
             await LockAsync(tx, "orders-command:" + partition, true, token);
-            var access = await AccessAsync(tx, token);
-            SameIdentity(initial, access);
+            // Both execution paths immediately revalidate current authority after
+            // acquiring their resource lock. Never use an earlier Allow for any
+            // replay disclosure, policy decision or new business write.
+            OrderAccessContext access;
             await using var db = OrdersDbContext.Open(tx.Connection);
             await db.Database.UseTransactionAsync(tx.Transaction, token);
             await TenancyConnections.VerifySchemaAsync(db, token);
