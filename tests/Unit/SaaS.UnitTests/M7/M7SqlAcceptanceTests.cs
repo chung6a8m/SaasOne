@@ -37,10 +37,15 @@ public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassF
             // application-stage login after platform validation.
             using var stageObserver = new M7StageProfile();
             using var sqlObserver = new M7SqlProfile();
+            // The customer DB identity must be read by SQL before any Orchard
+            // snapshot, but only ONCE per fresh routing decision. Retain the
+            // same real signed-bearer, tenant isolation and ACL checks.
+            using var customerIdentity = new M7RoutingIdentityCounter(source.Id);
             using var own = await M7Http.SendAsync(fixture, tokens[source.Slug], source.Slug, "/" + orders[source.Slug].Id, ct: Ct);
             Assert.Equal(HttpStatusCode.OK, own.StatusCode);
             var actual = await own.Content.ReadFromJsonAsync<OrderView>(Ct);
             Assert.NotNull(actual); Assert.Equal("Customer " + source.Slug, actual.CustomerName);
+            Assert.Equal(1, customerIdentity.Count);
             var aclStages = stageObserver.Snapshot().Stages.Single(x => x.Stage == "acl.authorize");
             var aclSql = sqlObserver.SnapshotStages().Single(x => x.Stage == "acl.authorize");
             Assert.True(aclStages.Count > 0, "A real authority source recheck is required.");
