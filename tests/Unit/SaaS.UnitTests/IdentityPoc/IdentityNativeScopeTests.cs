@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -49,6 +50,28 @@ public sealed partial class M2IdentityPocTests
                 Assert.Equal(0, observed.Command.Errors);
                 Assert.Equal(0, observed.Pending);
             }
+            // One *new* issuer scope is required for each complete bearer validation.
+            // The original path establishes two native SQL logins (family and token),
+            // so this is deliberately RED before the bounded bearer implementation.
+            async Task<IdentityFamily> BearerAsync()
+            {
+                var request = new DefaultHttpContext { RequestServices = provider };
+                request.Request.Headers.Authorization = "Bearer " + http.CapturedTokens["alpha"].AccessToken;
+                return await IdentityProtocol.AuthenticateBearerAsync(request, http.Tenant("alpha").Id);
+            }
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                using var profile = new M7SqlProfile();
+                Assert.Equal(familyId, (await BearerAsync()).Id);
+                var nativeStages = profile.SnapshotStages().Where(x => x.Stage == "identity.native").ToArray();
+                Assert.Single(nativeStages);
+                Assert.Equal(1, nativeStages[0].Open.Count);
+                Assert.True(nativeStages[0].Command.Count > 0);
+                Assert.Equal(0, nativeStages[0].Open.Errors);
+                Assert.Equal(0, nativeStages[0].Command.Errors);
+                Assert.Equal(0, profile.Snapshot().Pending);
+            }
+
             var accountDenied = await Assert.ThrowsAsync<IdentityDeniedException>(() =>
                 native.ValidateAccountAndAuthorizationAsync(session.Subject, "incorrect-test-stamp", "absent-test-authorization", ct));
             Assert.Equal("account_invalid", accountDenied.Code);
@@ -63,6 +86,10 @@ public sealed partial class M2IdentityPocTests
             var grantDenied = await Assert.ThrowsAsync<IdentityDeniedException>(() =>
                 native.ValidateAccountAndAuthorizationAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct));
             Assert.Equal("grant_invalid", grantDenied.Code);
+            // A previously accepted bearer must not survive a native issuer
+            // authorization revocation on its NEXT call with the same token.
+            var deniedBearer = await Assert.ThrowsAsync<IdentityDeniedException>(BearerAsync);
+            Assert.Equal("grant_invalid", deniedBearer.Code);
         });
     }
 }
