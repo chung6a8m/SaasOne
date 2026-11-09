@@ -34,11 +34,10 @@ public sealed partial class M2IdentityPocTests
             int nativeOpens;
             using (var reference = new M7SqlProfile())
             {
-                await native.ValidateAccountAsync(session.Subject, session.NativeSecurityStamp, ct);
-                await native.ValidateAuthorizationAsync(family.AuthorizationId, family.Subject, ct);
+                await native.ValidateAccountAndAuthorizationAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);
                 nativeOpens = reference.Snapshot().Open.Count;
             }
-            Assert.True(nativeOpens > 0, "Native checks must observe fresh SQL reads.");
+            Assert.Equal(1, nativeOpens);
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 using var measured = new M7SqlProfile();

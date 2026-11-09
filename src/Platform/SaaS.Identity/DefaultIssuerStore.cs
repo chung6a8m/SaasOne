@@ -30,6 +30,13 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
         cancellationToken.ThrowIfCancellationRequested();
     }
 
+    // Behavior-preserving adapter for the test-first bounded native-scope regression.
+    public async Task ValidateAccountAndAuthorizationAsync(string subject, string stamp, string authorizationId, CancellationToken cancellationToken)
+    {
+        await ValidateAccountAsync(subject, stamp, cancellationToken);
+        await ValidateAuthorizationAsync(authorizationId, subject, cancellationToken);
+    }
+
     public Task ValidateAccountAsync(string subject, string stamp, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
     {
         var manager = provider.GetRequiredService<UserManager<IUser>>();
