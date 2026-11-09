@@ -12,6 +12,8 @@ public sealed class TenantTransactionCoordinator(string connection) : ITenantTra
     public async Task<T> ExecuteAsync<T>(Guid tenantId, long gateVersion, Func<TenantTransaction, CancellationToken, Task<T>> action, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(action);
+        // Outlives SQL transaction disposal; acquired-to-end samples approximate lock hold.
+        using var stage = SaaSStageActivity.Start(SaaSStage.TenantTransaction);
         await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
         await using var transaction = (SqlTransaction)await sql.BeginTransactionAsync(cancellationToken);
         await TenantWriteGate.AcquireWriterAsync(sql, transaction, tenantId, gateVersion, cancellationToken);

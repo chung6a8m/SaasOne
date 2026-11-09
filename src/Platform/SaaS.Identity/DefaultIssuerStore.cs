@@ -9,6 +9,7 @@ using OrchardCore.Environment.Shell;
 using OrchardCore.Users;
 using OrchardCore.Users.Models;
 using YesSql;
+using SaaS.Tenancy.Operations;
 
 namespace SaaS.Identity;
 
@@ -17,6 +18,7 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
 {
     public async Task InDefaultAsync(Func<IServiceProvider, Task> action, CancellationToken cancellationToken)
     {
+        using var stage = SaaSStageActivity.Start(SaaSStage.IdentityNative);
         cancellationToken.ThrowIfCancellationRequested();
         var scope = await shells.GetScopeAsync("Default");
         await scope.UsingServiceScopeAsync(async current =>

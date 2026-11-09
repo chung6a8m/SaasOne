@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Domain;
+using SaaS.Tenancy.Operations;
 
 namespace SaaS.Identity;
 
@@ -101,6 +102,7 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
 
     public async Task<IdentityFamily> ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken ct)
     {
+        using var stage = SaaSStageActivity.Start(SaaSStage.IdentityFresh);
         await using var db = Open();
         // Keep one physical login for this validation only, not an authority snapshot.
         // Every query below still executes; disposing this owned context closes it.

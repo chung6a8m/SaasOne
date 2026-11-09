@@ -88,6 +88,7 @@ public static class SqlTransactionLocks
                 throw new TenantContractException("transaction_lock_invalid");
         }
         if (orderedResources.Count == 0) return;
+        using var lockStage = SaaSStageActivity.Start(SaaSStage.OrdersLockPage);
         await using var command = SqlOperations.Command(connection, """
             SET NOCOUNT ON;
             DECLARE @remaining nvarchar(max) = @resources;
@@ -118,12 +119,18 @@ public static class SqlTransactionLocks
         if (result is not int code || code < 0)
             throw new TenantContractException(result is int value && value == -1
                 ? "write_gate_timeout" : "transaction_lock_unavailable");
+        SaaSStageActivity.Acquired(lockStage);
     }
 
     public static async Task AcquireAsync(SqlConnection connection, SqlTransaction transaction, string resource, bool exclusive, int timeoutMilliseconds, CancellationToken ct)
     {
         if (transaction.Connection != connection || resource.Length is < 1 or > 255 || timeoutMilliseconds is < 0 or > 30000)
             throw new TenantContractException("transaction_lock_invalid");
+        var kind = resource.StartsWith("orders-command:", StringComparison.Ordinal) ? SaaSStage.OrdersLockCommand
+            : resource.StartsWith("orders-resource:", StringComparison.Ordinal) ? SaaSStage.OrdersLockResource
+            : resource == "saas-acl-admin-v1" ? SaaSStage.AclLock
+            : resource == TenantWriteGate.LockResource ? SaaSStage.WriteGateLock : SaaSStage.OtherLock;
+        using var lockStage = SaaSStageActivity.Start(kind);
         await using var command = SqlOperations.Command(connection, """
             DECLARE @result int;
             EXEC @result = sys.sp_getapplock @Resource = @resource, @LockMode = @mode,
@@ -134,5 +141,6 @@ public static class SqlTransactionLocks
         var result = await command.ExecuteScalarAsync(ct);
         if (result is not int code || code < 0)
             throw new TenantContractException(result is int value && value == -1 ? "write_gate_timeout" : "transaction_lock_unavailable");
+        SaaSStageActivity.Acquired(lockStage);
     }
 }

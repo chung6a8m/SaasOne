@@ -108,7 +108,9 @@ internal static class IdentityRuntimeBoundary
             if (!context.Request.IsHttps || !string.Equals(context.Request.Host.Value, deployment.Issuer.Authority, StringComparison.OrdinalIgnoreCase))
             { context.Response.StatusCode = 400; return; }
             // Selection owns and disposes its transports BEFORE Orchard/downstream execution.
-            var expected = await SelectAsync(context, connections, deployment, issuer, slug, local, ct);
+            ShellSettings? expected;
+            using (SaaSStageActivity.Start(SaaSStage.Routing))
+                expected = await SelectAsync(context, connections, deployment, issuer, slug, local, ct);
             if (expected is null) return;
             var host = context.RequestServices.GetRequiredService<IShellHost>();
             await host.InitializeAsync();

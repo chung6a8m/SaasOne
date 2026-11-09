@@ -100,7 +100,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             await db.SaveChangesAsync(token);
             return new OrderCommandResult(after, false, expires);
         }, ct);
-    }, ct);
+    }, ct, SaaSStage.OrdersWrite);
 
     public Task<OrderView> GetAsync(Guid id, CancellationToken ct) => ReadAsync(id, includeDecisions: false, ct);
     public Task<OrderView> GetDetailAsync(Guid id, CancellationToken ct) => ReadAsync(id, includeDecisions: true, ct);
@@ -132,7 +132,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             OrderPermissions.RequireRead(catalog, refreshed, value);
         }
         return value;
-    }, ct), ct);
+    }, ct), ct, SaaSStage.OrdersRead);
 
     public Task<OrderPage> ListAsync(int page, CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
     {
@@ -166,7 +166,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         access = refreshed;
         if (!CanRead(true) && !CanRead(false)) throw new AccessDeniedException(403, "permission_denied");
         return new OrderPage(items.Take(50).ToArray(), items.Count > 50);
-    }, ct), ct);
+    }, ct), ct, SaaSStage.OrdersRead);
 
     /// <summary>A current resource-aware UI hint; commands always authorize again inside their own transaction.</summary>
     public Task<bool> CanDecideAsync(Guid id, CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
@@ -182,7 +182,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         if (current.Status != OrderStatus.PendingApproval || approvalHandler is null) return false;
         try { OrderPermissions.Require(catalog, access, OrderAction.Approve, current); return true; }
         catch (AccessDeniedException error) when (error.StatusCode == 403 && error.Code is "permission_denied" or "self_approval_forbidden") { return false; }
-    }, ct), ct);
+    }, ct), ct, SaaSStage.OrdersRead);
 
     public Task DemandCreateAsync(CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
     {
@@ -204,6 +204,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
     }
     private async Task<OrderAccessContext> AccessAsync(TenantTransaction tx, CancellationToken ct)
     {
+        using var stage = SaaSStageActivity.Start(SaaSStage.AclAuthorize);
         var access = await currentAccess(tx, ct);
         if (access.Current.TenantId != tenantId || access.Snapshot.TenantId != tenantId) throw new AccessDeniedException(403, "tenant_mismatch");
         if (access.Current.UserId == Guid.Empty || string.IsNullOrWhiteSpace(access.ClientId)) throw new AccessDeniedException(401, "credential_invalid");
@@ -276,8 +277,9 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             throw new AccessDeniedException(503, "order_history_invalid");
         return row;
     }
-    private static async Task<T> BoundaryAsync<T>(Func<Task<T>> action, CancellationToken ct)
+    private static async Task<T> BoundaryAsync<T>(Func<Task<T>> action, CancellationToken ct, SaaSStage? stage = null)
     {
+        using var activity = stage is { } value ? SaaSStageActivity.Start(value) : null;
         try { return await action(); }
         catch (AccessDeniedException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

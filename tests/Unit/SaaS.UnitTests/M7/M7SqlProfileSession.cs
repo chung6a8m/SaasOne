@@ -11,6 +11,7 @@ internal sealed class M7SqlProfileSession : IDisposable
     private readonly M7ServerSnapshot _before;
     private readonly SqlConnection _observation;
     private readonly M7BlockingProbe _probe;
+    private readonly M7StageProfile _stages = new();
     private readonly M7SqlProfile _profile = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly Dictionary<(string, string, string, string, string), M7BlockingRow> _blocking = [];
@@ -73,7 +74,10 @@ internal sealed class M7SqlProfileSession : IDisposable
         _stop.Cancel();
         await _poll.ConfigureAwait(false);
         _profile.Dispose();
+        _stages.Dispose();
         var client = _profile.Snapshot();
+        var stageTimings = _stages.Snapshot();
+        var sqlByStage = _profile.SnapshotStages();
         await _observation.DisposeAsync();
         var after = await CaptureAsync(_connection, ct);
         var oldWaits = _before.Waits.ToDictionary(x => x.Name, StringComparer.Ordinal);
@@ -88,8 +92,8 @@ internal sealed class M7SqlProfileSession : IDisposable
         {
             schemaVersion = 2, sourceSha = M7Evidence.SourceSha, acceptance = "NOT_ASSESSED",
             scope = "Entire load window including ramp and drain, after token issuance and before integrity queries. Dedicated disposable SQL instance.",
-            interpretation = "Client totalMs sums concurrent operations, not wall-clock/CPU. Command counts/timings INCLUDE observation queries; application command count subtracts successful observation-query count only. Opens EXCLUDE the observation connection opened before the observer. Reader consumption is not in command timings. Server waits/counters include background and administrative snapshot traffic. Sampling adds measured overhead.",
-            beforeUtc = _before.Utc, afterUtc = after.Utc, requests, client,
+            interpretation = "Client totalMs sums concurrent operations, not wall-clock/CPU. Command counts/timings INCLUDE observation queries; application command count subtracts successful observation-query count only. Opens EXCLUDE the observation connection opened before the observer. Reader consumption is not in command timings. Server waits/counters include background and administrative snapshot traffic. Stage SQL groups use the innermost named Activity and are not per-request/tenant; stage durations are overlapping, and Orders lock holds approximate acquired-to-transaction-scope-end, not server release. Sampling adds overhead.",
+            beforeUtc = _before.Utc, afterUtc = after.Utc, requests, client, stageTimings, sqlByStage,
             connectionOpensPerRequest = requests == 0 ? 0 : client.Open.Count / (double)requests,
             applicationCommandCount = client.Command.Count - _samples,
             commandsPerRequest = requests == 0 ? 0 : (client.Command.Count - _samples) / (double)requests,
@@ -126,7 +130,7 @@ internal sealed class M7SqlProfileSession : IDisposable
         _stop.Cancel();
         // Poll continuations never capture the test synchronization context; query timeout bounds cleanup.
         _poll.GetAwaiter().GetResult();
-        _profile.Dispose(); _observation.Dispose(); _stop.Dispose();
+        _profile.Dispose(); _stages.Dispose(); _observation.Dispose(); _stop.Dispose();
     }
 }
 internal sealed record M7SqlWait(string Name, long Tasks, long WaitMs, long SignalMs);

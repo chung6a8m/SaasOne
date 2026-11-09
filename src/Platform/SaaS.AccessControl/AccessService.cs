@@ -125,6 +125,7 @@ internal static class AclRepository
     internal const string LockResource = "saas-acl-admin-v1";
     internal static async Task<AccessSnapshot> ReadAsync(AccessDbContext db, CancellationToken ct)
     {
+        using var stage = SaaSStageActivity.Start(SaaSStage.AclSnapshot);
         // The caller already owns both this physical connection and its transaction.
         // A fresh, transaction-scoped shared/exclusive ACL lock is held by every caller.
         if (db.Database.GetDbConnection() is not SqlConnection connection
