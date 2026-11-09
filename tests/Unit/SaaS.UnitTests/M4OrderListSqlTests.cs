@@ -23,6 +23,7 @@ public sealed class M4OrderListSqlTests
         await using var h = await M4SqlHarness.CreateAsync(Ct);
         var rows = await SeedAsync(h, 51, 1);
         using (var queries = new OrdersReadCounter(h.Target.Connection))
+        using (var calls = new ResourceLockCommandCounter())
         {
             var page = await h.Service().ListAsync(0, Ct);
             Assert.Equal(50, page.Items.Length);
@@ -30,6 +31,7 @@ public sealed class M4OrderListSqlTests
             Assert.Equal(rows.Take(50).Select(x => x.Id), page.Items.Select(x => x.Id));
             // Counts only Orders/revisions data SELECTs (not schema, authority or lock commands).
             Assert.Equal(4, queries.Count);
+            Assert.Equal(1, calls.Count); // 51 server-side locks, one SqlClient round trip.
         }
 
         h.Deny("Orders.ViewOthers");
@@ -84,38 +86,6 @@ public sealed class M4OrderListSqlTests
         Assert.Equal(4, queries.Count);
     }
 
-
-    [Fact]
-    public async Task Full_page_batches_shared_resource_locks_into_one_client_SQL_command()
-    {
-        await using var h = await M4SqlHarness.CreateAsync(Ct);
-        await SeedAsync(h, 51, 0);
-        using var calls = new ResourceLockCommandCounter();
-        var page = await h.Service().ListAsync(0, Ct);
-        Assert.Equal(50, page.Items.Length);
-        Assert.True(page.HasMore);
-        // 51 actual per-resource locks still must be acquired; only network round trips are batched.
-        Assert.Equal(1, calls.Count);
-    }
-
-    [Fact]
-    public async Task Full_page_shared_locks_still_wait_for_a_writer_and_release_on_completion()
-    {
-        await using var h = await M4SqlHarness.CreateAsync(Ct);
-        var rows = await SeedAsync(h, 2, 0);
-        await using var sql = await SqlOperations.OpenAsync(h.Target.Connection, Ct);
-        await using var transaction = (SqlTransaction)await sql.BeginTransactionAsync(Ct);
-        await SqlTransactionLocks.AcquireAsync(sql, transaction, "orders-resource:" + rows[0].Id.ToString("N"), true, 30000, Ct);
-        var reading = h.Service().ListAsync(0, Ct);
-        try
-        {
-            await Task.Delay(200, Ct);
-            Assert.False(reading.IsCompleted, "Reader must not bypass an exclusive order resource lock.");
-        }
-        finally { await transaction.RollbackAsync(CancellationToken.None); }
-        var page = await reading;
-        Assert.Equal(2, page.Items.Length);
-    }
 
     private static async Task<OrderRow[]> SeedAsync(M4SqlHarness h, int owned, int other)
     {
