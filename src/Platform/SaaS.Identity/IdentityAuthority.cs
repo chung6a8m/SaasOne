@@ -100,7 +100,20 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         return family;
     }
 
-    public async Task<IdentityFamily> ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken ct)
+    public Task<IdentityFamily> ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken ct)
+        => ValidateCoreAsync(familyId, routedTenantId, web, null, null, ct);
+
+    // This is used only after JWT signature, issuer, audience, lifetime and scope
+    // validation. It returns a family solely AFTER all native checks succeed.
+    internal Task<IdentityFamily> ValidateBearerAsync(Guid familyId, Guid routedTenantId,
+        ClaimsPrincipal principal, string tokenId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        return ValidateCoreAsync(familyId, routedTenantId, false, principal, tokenId, ct);
+    }
+
+    private async Task<IdentityFamily> ValidateCoreAsync(Guid familyId, Guid routedTenantId, bool web,
+        ClaimsPrincipal? bearerPrincipal, string? tokenId, CancellationToken ct)
     {
         using var stage = SaaSStageActivity.Start(SaaSStage.IdentityFresh);
         await using var db = Open();
@@ -128,7 +141,11 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         deployment.ValidateClient(client);
         if (web && (session.IdleExpiresAt <= Now || session.AbsoluteExpiresAt <= Now))
             throw new IdentityDeniedException(401, "session_expired");
-        await issuerStore.ValidateAccountAndAuthorizationAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);
+        if (bearerPrincipal is null)
+            await issuerStore.ValidateAccountAndAuthorizationAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);
+        else
+            await issuerStore.ValidateBearerAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId,
+                tokenId ?? "", () => IdentityProtocol.DemandClaims(bearerPrincipal, family), ct);
         if (web) await TouchAsync(db, session, ct);
         return family;
     }

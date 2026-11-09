@@ -39,6 +39,24 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
         await ValidateAuthorizationAsync(provider, authorizationId, subject, cancellationToken);
     }, cancellationToken);
 
+    // A bearer request already requires both issuer-family and native token checks.
+    // Keep all of them in one NEW scope only for this validation, never across
+    // subsequent validations, requests, ACL refreshes or Orders lock boundaries.
+    internal Task ValidateBearerAsync(string subject, string stamp, string authorizationId, string tokenId,
+        Action demandBoundClaims, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(demandBoundClaims);
+        return InDefaultAsync(async provider =>
+        {
+            await ValidateAccountAsync(provider, subject, stamp);
+            await ValidateAuthorizationAsync(provider, authorizationId, subject, cancellationToken);
+            // Preserve original ordering: claim/family binding occurs only after
+            // current native account + authorization pass, before native token reads.
+            demandBoundClaims();
+            await ValidateAccessAsync(provider, tokenId, authorizationId, subject, cancellationToken);
+        }, cancellationToken);
+    }
+
     public Task ValidateAccountAsync(string subject, string stamp, CancellationToken cancellationToken) =>
         InDefaultAsync(provider => ValidateAccountAsync(provider, subject, stamp), cancellationToken);
 
@@ -83,7 +101,11 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
             throw new IdentityDeniedException(401, "grant_invalid");
     }
 
-    public Task ValidateAccessAsync(string tokenId, string authorizationId, string subject, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
+    public Task ValidateAccessAsync(string tokenId, string authorizationId, string subject, CancellationToken cancellationToken) =>
+        InDefaultAsync(provider => ValidateAccessAsync(provider, tokenId, authorizationId, subject, cancellationToken), cancellationToken);
+
+    private async Task ValidateAccessAsync(IServiceProvider provider, string tokenId, string authorizationId,
+        string subject, CancellationToken cancellationToken)
     {
         var tokens = provider.GetRequiredService<IOpenIddictTokenManager>();
         var token = string.IsNullOrEmpty(tokenId) ? null : await tokens.FindByIdAsync(tokenId, cancellationToken);
@@ -99,5 +121,5 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
             || await authorizations.GetSubjectAsync(authorization, cancellationToken) != subject
             || await tokens.GetApplicationIdAsync(token, cancellationToken) != await authorizations.GetApplicationIdAsync(authorization, cancellationToken))
             throw new IdentityDeniedException(401, "grant_invalid");
-    }, cancellationToken);
+    }
 }

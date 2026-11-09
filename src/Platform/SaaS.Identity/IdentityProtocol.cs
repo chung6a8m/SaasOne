@@ -129,11 +129,11 @@ public static class IdentityProtocol
         if (!principal.FindAll("scope").SelectMany(x => x.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries)).Contains(IdentityNames.Scope, StringComparer.Ordinal))
             throw new IdentityDeniedException(403, "scope_required");
         var authority = context.RequestServices.GetRequiredService<IdentityAuthority>();
-        var family = await authority.ValidateAsync(IdentityAuthority.RequiredId(principal, IdentityNames.Family), routedTenantId, false, context.RequestAborted);
-        DemandClaims(principal, family);
-        await context.RequestServices.GetRequiredService<DefaultIssuerStore>().ValidateAccessAsync(
-            principal.FindFirst(OpenIddictConstants.Claims.Private.TokenId)?.Value ?? "", family.AuthorizationId, family.Subject, context.RequestAborted);
-        return family;
+        // All platform/native/claims/token checks remain source-fresh and ordered.
+        // The native checks share one *per-validation* scope, not a cached issuer.
+        return await authority.ValidateBearerAsync(
+            IdentityAuthority.RequiredId(principal, IdentityNames.Family), routedTenantId, principal,
+            principal.FindFirst(OpenIddictConstants.Claims.Private.TokenId)?.Value ?? "", context.RequestAborted);
     }
 
     public static async Task WriteErrorAsync(HttpContext context, int status, string code)
