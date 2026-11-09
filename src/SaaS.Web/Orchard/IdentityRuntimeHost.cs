@@ -184,7 +184,12 @@ internal static class IdentityRuntimeBoundary
         // Check the independent platform registry BEFORE native handlers can emit
         // an authorization code or even an OAuth error to a drifted native URI.
         if (issuer && path is "/connect/authorize" or "/connect/logout")
+        {
+            // Do not retain a SQL session while a client supplies a POST form body.
+            // EF opens the same fixed source for the callback query after parsing.
+            if (HttpMethods.IsPost(context.Request.Method)) await platformSql.CloseAsync();
             await DemandRegisteredCallbackAsync(context, platform, deployment, path == "/connect/logout");
+        }
         ShellSettings expected;
         if (issuer)
         {
