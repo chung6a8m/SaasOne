@@ -190,18 +190,16 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         return true;
     }, ct), ct);
 
-    private async Task<T> InTransactionAsync<T>(Func<TenantTransaction, CancellationToken, Task<T>> work, CancellationToken ct)
-    {
-        long version;
-        await using (var sql = await SqlOperations.OpenAsync(connection, ct))
+    private Task<T> InTransactionAsync<T>(Func<TenantTransaction, CancellationToken, Task<T>> work, CancellationToken ct)
+        => new TenantTransactionCoordinator(connection).ExecuteWithPreflightAsync(tenantId, async (sql, token) =>
         {
-            var gate = await TenantWriteGate.ReadAsync(sql, null, ct);
+            // Fresh preflight read on the same owned login. The coordinator must still
+            // recheck this version AFTER acquiring its transaction-owned write-gate lock.
+            var gate = await TenantWriteGate.ReadAsync(sql, null, token);
             if (gate.TenantId != tenantId || tenantId == Guid.Empty) throw new AccessDeniedException(403, "tenant_mismatch");
             if (!gate.IsOpen) throw new AccessDeniedException(503, "tenant_operation_in_progress");
-            version = gate.Version;
-        }
-        return await new TenantTransactionCoordinator(connection).ExecuteAsync(tenantId, version, work, ct);
-    }
+            return gate.Version;
+        }, work, ct);
     private async Task<OrderAccessContext> AccessAsync(TenantTransaction tx, CancellationToken ct)
     {
         using var stage = SaaSStageActivity.Start(SaaSStage.AclAuthorize);

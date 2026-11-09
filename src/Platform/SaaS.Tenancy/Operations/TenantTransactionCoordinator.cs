@@ -15,6 +15,30 @@ public sealed class TenantTransactionCoordinator(string connection) : ITenantTra
         // Outlives SQL transaction disposal; acquired-to-end samples approximate lock hold.
         using var stage = SaaSStageActivity.Start(SaaSStage.TenantTransaction);
         await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+        return await ExecuteOnOpenAsync(sql, tenantId, gateVersion, action, cancellationToken);
+    }
+
+    /// <summary>
+    /// Owns the fixed-source connection across a fresh, out-of-transaction preflight
+    /// and the subsequent transaction. The transaction rechecks the gate under its
+    /// shared lock; the preflight result is only a version fence, never authority.
+    /// No connection is shared across operations or reused after this call returns.
+    /// </summary>
+    public async Task<T> ExecuteWithPreflightAsync<T>(Guid tenantId,
+        Func<SqlConnection, CancellationToken, Task<long>> preflight,
+        Func<TenantTransaction, CancellationToken, Task<T>> action, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(preflight);
+        ArgumentNullException.ThrowIfNull(action);
+        await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+        var gateVersion = await preflight(sql, cancellationToken);
+        using var stage = SaaSStageActivity.Start(SaaSStage.TenantTransaction);
+        return await ExecuteOnOpenAsync(sql, tenantId, gateVersion, action, cancellationToken);
+    }
+
+    private static async Task<T> ExecuteOnOpenAsync<T>(SqlConnection sql, Guid tenantId, long gateVersion,
+        Func<TenantTransaction, CancellationToken, Task<T>> action, CancellationToken cancellationToken)
+    {
         await using var transaction = (SqlTransaction)await sql.BeginTransactionAsync(cancellationToken);
         await TenantWriteGate.AcquireWriterAsync(sql, transaction, tenantId, gateVersion, cancellationToken);
         var result = await action(new TenantTransaction(sql, transaction), cancellationToken);
