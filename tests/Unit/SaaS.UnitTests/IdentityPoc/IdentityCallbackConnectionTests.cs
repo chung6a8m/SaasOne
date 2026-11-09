@@ -17,6 +17,8 @@ public sealed partial class M2IdentityPocTests
     {
         var ct = TestContext.Current.CancellationToken;
         await using var http = await IdentityHttpFixture.CreateAsync(fixture.Environment, productHost: true);
+        using (var warmClient = http.NewClient())
+        using (var warm = await warmClient.GetAsync("/health/ready", ct)) Assert.Equal(200, (int)warm.StatusCode);
         TestServer server = null!;
         await http.InDefaultAsync(provider =>
         {
