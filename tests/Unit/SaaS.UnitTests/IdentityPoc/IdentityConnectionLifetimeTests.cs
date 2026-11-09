@@ -47,8 +47,8 @@ public sealed partial class M2IdentityPocTests
                 // RED: all seven independent platform authority entities must
                 // be checked freshly, but via ONE server-side SQL SELECT per
                 // validation; native issuer still has its own fresh SQL scope.
-                var fresh = Assert.Single(measured.SnapshotStages()
-                    .Where(x => x.Stage == "identity.fresh"));
+                var fresh = Assert.Single(measured.SnapshotStages(),
+                    x => x.Stage == "identity.fresh");
                 Assert.Equal(1, fresh.Open.Count);
                 Assert.Equal(1, fresh.Command.Count);
                 Assert.Equal(0, fresh.Open.Errors);
