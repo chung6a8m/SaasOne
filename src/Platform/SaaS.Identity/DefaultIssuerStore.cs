@@ -30,23 +30,29 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
         cancellationToken.ThrowIfCancellationRequested();
     }
 
-    // Behavior-preserving adapter for the test-first bounded native-scope regression.
-    public async Task ValidateAccountAndAuthorizationAsync(string subject, string stamp, string authorizationId, CancellationToken cancellationToken)
+    // This scope lives for ONE validation; it is never reused by a later authority read.
+    public Task ValidateAccountAndAuthorizationAsync(string subject, string stamp, string authorizationId, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
     {
-        await ValidateAccountAsync(subject, stamp, cancellationToken);
-        await ValidateAuthorizationAsync(authorizationId, subject, cancellationToken);
-    }
+        await ValidateAccountAsync(provider, subject, stamp);
+        await ValidateAuthorizationAsync(provider, authorizationId, subject, cancellationToken);
+    }, cancellationToken);
 
-    public Task ValidateAccountAsync(string subject, string stamp, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
+    public Task ValidateAccountAsync(string subject, string stamp, CancellationToken cancellationToken) =>
+        InDefaultAsync(provider => ValidateAccountAsync(provider, subject, stamp), cancellationToken);
+
+    private static async Task ValidateAccountAsync(IServiceProvider provider, string subject, string stamp)
     {
         var manager = provider.GetRequiredService<UserManager<IUser>>();
         var user = await manager.FindByIdAsync(subject);
         if (user is not User { IsEnabled: true } || await manager.IsLockedOutAsync(user)
             || !string.Equals(await manager.GetSecurityStampAsync(user), stamp, StringComparison.Ordinal))
             throw new IdentityDeniedException(401, "account_invalid");
-    }, cancellationToken);
+    }
 
-    public Task ValidateAuthorizationAsync(string authorizationId, string subject, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
+    public Task ValidateAuthorizationAsync(string authorizationId, string subject, CancellationToken cancellationToken) =>
+        InDefaultAsync(provider => ValidateAuthorizationAsync(provider, authorizationId, subject, cancellationToken), cancellationToken);
+
+    private static async Task ValidateAuthorizationAsync(IServiceProvider provider, string authorizationId, string subject, CancellationToken cancellationToken)
     {
         var manager = provider.GetRequiredService<IOpenIddictAuthorizationManager>();
         var authorization = await manager.FindByIdAsync(authorizationId, cancellationToken);
@@ -73,7 +79,7 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
             .FirstOrDefaultAsync(cancellationToken);
         if (invalidAccess is not null)
             throw new IdentityDeniedException(401, "grant_invalid");
-    }, cancellationToken);
+    }
 
     public Task ValidateAccessAsync(string tokenId, string authorizationId, string subject, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
     {

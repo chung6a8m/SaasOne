@@ -126,8 +126,7 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         deployment.ValidateClient(client);
         if (web && (session.IdleExpiresAt <= Now || session.AbsoluteExpiresAt <= Now))
             throw new IdentityDeniedException(401, "session_expired");
-        await issuerStore.ValidateAccountAsync(session.Subject, session.NativeSecurityStamp, ct);
-        await issuerStore.ValidateAuthorizationAsync(family.AuthorizationId, family.Subject, ct);
+        await issuerStore.ValidateAccountAndAuthorizationAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);
         if (web) await TouchAsync(db, session, ct);
         return family;
     }
