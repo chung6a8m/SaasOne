@@ -44,7 +44,11 @@ public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassF
             var aclStages = stageObserver.Snapshot().Stages.Single(x => x.Stage == "acl.authorize");
             var aclSql = sqlObserver.SnapshotStages().Single(x => x.Stage == "acl.authorize");
             Assert.True(aclStages.Count > 0, "A real authority source recheck is required.");
-            Assert.Equal(aclStages.Count, aclSql.Open.Count);
+            // A fresh profile read still executes on the caller-owned Orders
+            // transaction, not on a second physical customer login.
+            Assert.Equal(0, aclSql.Open.Count);
+            Assert.True(aclSql.Command.Count >= aclStages.Count * 3,
+                "Five current migration histories, approval columns and plan profile must still be queried.");
             Assert.Equal(0, aclSql.Open.Errors);
             Assert.Equal(0, sqlObserver.Snapshot().Pending);
             foreach (var target in fixture.Environment.Tenants.Where(x => x.Id != source.Id))

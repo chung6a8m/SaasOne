@@ -167,6 +167,31 @@ public sealed partial class M4HttpTests
             }
             finally { if (source == "acl") await AclReadAsync(true); else await http.SetReadFailureAsync(source, false); }
         }
+        // A borrowed transaction connection must still reject current profile
+        // corruption on both API and web routes. The exact original profile
+        // is restored before leaving this mandatory SQL/HTTP case.
+        await using (var admin = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct))
+        {
+            var stored = await SqlOperations.ScalarAsync(admin,
+                "SELECT [ManifestHash] FROM [tenancy].[ApplicationProfile] WHERE [Id] = 1", Ct);
+            var originalHash = Assert.IsType<string>(stored);
+            try
+            {
+                await SqlOperations.ExecuteAsync(admin,
+                    "UPDATE [tenancy].[ApplicationProfile] SET [ManifestHash] = @wrong WHERE [Id] = 1",
+                    Ct, ("@wrong", new string('0', 64)));
+                using var invalidApi = await ApiAsync(http, token, "/alpha/api/v1/orders", "create-http", M4PolicyTests.Draft);
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, invalidApi.StatusCode);
+                using var invalidWeb = await browser.GetAsync("/alpha/orders");
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, invalidWeb.StatusCode);
+            }
+            finally
+            {
+                await SqlOperations.ExecuteAsync(admin,
+                    "UPDATE [tenancy].[ApplicationProfile] SET [ManifestHash] = @expected WHERE [Id] = 1",
+                    CancellationToken.None, ("@expected", originalHash));
+            }
+        }
         using var healthy = await ApiAsync(http, token, "/alpha/api/v1/orders", "create-http", M4PolicyTests.Draft);
         Assert.True((await ResultAsync(healthy, HttpStatusCode.Created)).Replayed);
     }
