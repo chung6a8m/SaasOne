@@ -32,17 +32,30 @@ public sealed partial class M1SqlTests
         await using var observer = await SqlOperations.OpenAsync(fixture.Environment.Admin, ct);
         var probe = new M7BlockingProbe(observer, new Dictionary<string, string> { [database] = "test" });
         await using var blocker = await SqlOperations.OpenAsync(fixture.Environment.CustomerAdmin(tenant), ct);
+        var blockerId = Convert.ToInt32(await SqlOperations.ScalarAsync(blocker, "SELECT @@SPID", ct));
         await using var transaction = (SqlTransaction)await blocker.BeginTransactionAsync(ct);
         await using (var command = SqlOperations.Command(blocker,
-            "SELECT [Id] FROM [tenancy].[WriteGate] WITH (XLOCK, ROWLOCK, HOLDLOCK) WHERE [Id] = 1"))
+            "UPDATE [tenancy].[WriteGate] WITH (ROWLOCK) SET [Version] = [Version] + 1 WHERE [Id] = 1"))
         {
             command.Transaction = transaction;
-            Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+            Assert.Equal(1, await command.ExecuteNonQueryAsync(ct));
         }
         await using var waiter = await SqlOperations.OpenAsync(fixture.Environment.Runtime(tenant), ct);
+        var waiterId = Convert.ToInt32(await SqlOperations.ScalarAsync(waiter, "SELECT @@SPID", ct));
         var waiting = TenantWriteGate.ReadAsync(waiter, null, ct);
         try
         {
+            var blocked = 0;
+            var setup = Stopwatch.StartNew();
+            do
+            {
+                blocked = Convert.ToInt32(await SqlOperations.ScalarAsync(observer,
+                    "SELECT COUNT(*) FROM sys.dm_exec_requests WHERE session_id = @waiter AND blocking_session_id = @blocker AND wait_type LIKE 'LCK%';",
+                    ct, ("@waiter", waiterId), ("@blocker", blockerId)));
+                if (blocked > 0) break;
+                await Task.Delay(50, ct);
+            } while (setup.Elapsed < TimeSpan.FromSeconds(5));
+            Assert.True(blocked > 0 && !waiting.IsCompleted, "Fixture must prove an actual blocked reader before evaluating the probe.");
             IReadOnlyList<M7BlockingRow> rows = [];
             var timer = Stopwatch.StartNew();
             do

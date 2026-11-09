@@ -1,0 +1,7 @@
+# Correction to the initial blocking-probe RED evidence
+
+The earlier m7-blocking-resource-diagnostic.md described a real held row lock, but did not establish that the reader actually waited BEFORE evaluating an empty probe. At cdc68d1d6fa536c12b150f1a716e2533f6ab617f, run 42547100315 / artifact 13643857989 (SHA256 0fe709c497b176d35818718e64e9582b88e126c825fe6be2db152a91f3b5646f), the implemented query still yielded an empty collection. All 225 non-SQL and 52 of 53 M1 SQL cases passed; the single failure was the same collection assertion.
+
+A SELECT with XLOCK alone is not a sufficient fixture proof that this particular later read is blocked. Thus the earlier failures remain FAIL, but are NOT sufficient standalone behavioral RED proof for this diagnostic. No query-filter change is justified until the waiting-reader setup is established.
+
+Correction: the private fixture changes WriteGate.Version inside an uncommitted transaction and ALWAYS rolls it back. A separate DMV assertion proves the exact reader is blocked by that transaction with an LCK wait before evaluating the probe. Session identifiers stay private in parameterized fixture queries and are never exported. The probe is temporarily the empty negative control again; observe the collection assertion fail only AFTER the new setup assertion passes, then restore the already-implemented metadata query and verify GREEN. This changes no production query, workload, target, permission or lock behavior.
