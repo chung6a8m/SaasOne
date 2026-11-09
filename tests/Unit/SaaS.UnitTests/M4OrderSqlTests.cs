@@ -20,7 +20,17 @@ public sealed class M4OrderSqlTests
     public async Task Create_persists_one_order_revision_audit_and_receipt_and_reads_the_same_rowversion()
     {
         await using var h = await M4SqlHarness.CreateAsync(Ct);
-        var result = await h.Service().ExecuteAsync(Create(), Ct);
+        OrderCommandResult result;
+        using (var profile = new M7SqlProfile())
+        {
+            result = await h.Service().ExecuteAsync(Create(), Ct);
+            var observed = profile.Snapshot();
+            // A fresh unpooled source is still checked both before the transaction
+            // and after the transaction-owned write-gate lock; only the login is reused.
+            Assert.Equal(1, observed.Open.Count);
+            Assert.Equal(0, observed.Open.Errors);
+            Assert.Equal(0, observed.Pending);
+        }
         Assert.False(result.Replayed); Assert.Equal(OrderStatus.Draft, result.Order.Status);
         Assert.Equal(1, result.Order.Revision); Assert.False(result.Order.ApprovalRequired);
         Assert.Equal(h.Actor, result.Order.CreatedBy); Assert.Equal(8, Convert.FromBase64String(result.Order.Version).Length);
