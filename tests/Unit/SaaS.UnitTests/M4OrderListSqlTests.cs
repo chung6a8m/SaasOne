@@ -35,6 +35,23 @@ public sealed class M4OrderListSqlTests
             Assert.Equal(1, calls.Count); // 51 server-side locks, one SqlClient round trip.
         }
 
+        // P2 security/performance review: the 2-SELECT projection must still
+        // verify real, deep historical state (50 then 1000 revisions/order).
+        // The test-only probe records sanitized SQL Server SHOWPLAN_XML shape,
+        // logical reads and CPU against the previous three-query strategy.
+        await M4ListHistoryScaleProbe.ValidateAsync(h, rows.Take(51).Select(x => x.Id).ToArray(),
+            async () =>
+            {
+                using var deepQueries = new OrdersReadCounter(h.Target.Connection);
+                using var deepLocks = new ResourceLockCommandCounter();
+                var deep = await h.Service().ListAsync(0, Ct);
+                Assert.Equal(50, deep.Items.Length);
+                Assert.True(deep.HasMore);
+                Assert.Equal(rows.Take(50).Select(x => x.Id), deep.Items.Select(x => x.Id));
+                Assert.Equal(2, deepQueries.Count);
+                Assert.Equal(1, deepLocks.Count);
+            }, Ct);
+
         h.Deny("Orders.ViewOthers");
         var own = await h.Service().ListAsync(0, Ct);
         Assert.True(own.HasMore);
