@@ -1,0 +1,23 @@
+# Issue #15 P3 — bounded List integrity projection while preserving all 51 resource locks
+
+Status: diagnostic-backed, test-first optimization candidate, not performance/production acceptance.
+Base: `92808f51fe43f124d51d496fd636132a102c984a` (stacked PR #17, which depends on Draft PR #16). No independent merge or deployment allowed before its parents' security approval.
+
+## Evidence and hypothesis
+
+Operation-specific SQL/HTTPS M7 profiling in PR #17 ([run 42957974621](https://github.com/chung6a8m/SaasOne/actions/runs/42957974621), [artifact 13827663032](https://github.com/chung6a8m/SaasOne/actions/runs/42957974621/artifacts/13827663032)) identifies high List page-lock acquisition/hold p95. Example alpha List lock wait ~1,598 ms and approximate page-lock acquired→transaction end hold ~2,390 ms. This diagnostic includes ramp/drain and is **not** matched SQL-server lock-owner or SLO proof.
+
+After the already-ordered 51 shared resource locks, `OrderService.LoadPageAsync` currently performs **three SQL SELECTs**, separately retrieving rows, latest snapshot/revision and all-history count/approval marker. Including the pre-lock page-ID query, the real SQL test records **four Orders/Revisions SELECTs per full List page**. Hypothesis: one bounded EF Core SQL Server projection after the locks can retrieve all three sets of integrity facts in one SQL query, for **2 total Orders/Revisions SELECTs** with unchanged locked state. This is a reduction in round trips, not an automatic performance win; query plan/correlated scans might be slower. If lock hold/wait worsens materially, revert.
+
+## Task and integration contract
+
+- Runtime file: `src/Modules/SaaS.Orders/OrderService.cs`, ONLY `LoadPageAsync`, after existing locks and post-lock reauthorization. Keep the outer transaction, preflight + writegate checks, 0–51 ID limits, ordered shared resource `sp_getapplock` batch, current permission source, and per-item integrity-then-current-permission order exactly.
+- Query: EF `Orders.AsNoTracking()` plus server-side correlated `Latest = db.Revisions.Where(r => r.OrderId == row.Id && r.Revision == row.Revision).SingleOrDefault()`, `HistoryCount = db.Revisions.LongCount(r => r.OrderId == row.Id)`, `HistoricalApproval = db.Revisions.Any(r => r.OrderId == row.Id && r.ApprovalRequired)`. This mirrors the *already proven* one-row `LoadAsync` SQL projection. The returned rows must be looked up in original `ids` order, including sentinel; missing order is still 404, missing/mismatched latest/history or unrecognized historical marker is still 503. Complete snapshots and rowversion remain checked, not cached.
+- Real-SQL test-first: amend **existing mandatory** `M4OrderListSqlTests` methods (no extra inventory names) to require **2** `OrdersReadCounter` SQL commands vs previous **4**, including full 51-row Own/Others page and previously-approved-historical-marker denial. Preserve existing one-batch 51 ordered shared lock assertion. RED must show expected 2 vs actual 4, with all other inherited cases passing; build errors or infrastructure failures do not qualify as behavioral RED.
+- Migration owner: none. No new index/table, EF migration, storage owner or schema change. No new authentication, authorization cache, SQL connection, pooling, retry, privilege or transaction.
+- CI: original M4 SQL 46-case inventory, M0–M6 inherited and M7 seven mandatory SQL/HTTPS cases; dedicated Issue15 eight-open POC and full 100-VU four-tenant diagnostic workload at exact PR merge SHA. M7 frozen approved targets/hashes and historical failures remain unmodified; if official Candidate ancestry is BLOCKED, report separately rather than relabeling a supplemental load as Acceptance.
+- Performance decision: compare source-matched List `orders.lock.page` wait/approximate hold p50/p95/p99 per tenant and `orders.read` stage + overall List client p95/p99 against prior PR #17 run, while recording variability, SQL commands/request, timeouts, errors, history integrity, no skipped cases. This candidate must be reverted or redesigned if it does not maintain correctness and a defensible reduction in post-lock work. P3 is not authorization to weaken lock ordering, ACL Deny, replay/history, transaction atomicity, or disable source checks.
+
+## Review gates
+
+P1 on PR #16 has the project owner's approval for its documented post-final-check revocation race but lacks an **independent security review**; PR #16 remains Draft. PR #17 is diagnostic-only and separately Draft. PR #18 remains stacked Draft. Neither the original 8-open success nor this potential two-command optimization establishes frozen p95/p99 SLO or production capacity.

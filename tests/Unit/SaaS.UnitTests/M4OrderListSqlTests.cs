@@ -29,8 +29,9 @@ public sealed class M4OrderListSqlTests
             Assert.Equal(50, page.Items.Length);
             Assert.True(page.HasMore);
             Assert.Equal(rows.Take(50).Select(x => x.Id), page.Items.Select(x => x.Id));
-            // Counts only Orders/revisions data SELECTs (not schema, authority or lock commands).
-            Assert.Equal(4, queries.Count);
+            // RED: one ordered page-ID SELECT + one locked integrity projection.
+            // All 51 shared resource locks, pagination and fresh ACL remain mandatory.
+            Assert.Equal(2, queries.Count);
             Assert.Equal(1, calls.Count); // 51 server-side locks, one SqlClient round trip.
         }
 
@@ -83,7 +84,9 @@ public sealed class M4OrderListSqlTests
         var invalid = await Assert.ThrowsAsync<AccessDeniedException>(() => h.Service().ListAsync(0, Ct));
         Assert.Equal(503, invalid.StatusCode);
         Assert.Equal("order_history_invalid", invalid.Code);
-        Assert.Equal(4, queries.Count);
+        // RED: a historic approval marker must still deny under the unified
+        // locked projection, even if the current row/revision appear valid.
+        Assert.Equal(2, queries.Count);
     }
 
 
