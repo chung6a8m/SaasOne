@@ -88,7 +88,7 @@ try {
         if (Test-Path $pocDirectory) { Remove-Item $pocDirectory -Recurse -Force }
         [void](New-Item $pocDirectory -ItemType Directory -Force)
         $pocRawLog = Join-Path $pocDirectory 'test.raw.log'
-        & dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter 'FullyQualifiedName~Issue15ApproveConnectionSqlTests' --logger trx --results-directory $pocDirectory *> $pocRawLog
+        & dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter 'Category=SqlIssue15' --logger trx --results-directory $pocDirectory *> $pocRawLog
         $pocExitCode = $LASTEXITCODE
         $pocSafeLog = Protect-M6Text ([IO.File]::ReadAllText($pocRawLog))
         [IO.File]::WriteAllText((Join-Path $out 'issue15-test.log'), $pocSafeLog)
@@ -99,7 +99,7 @@ try {
         [IO.File]::WriteAllText((Join-Path $out 'issue15-tests.trx'),
             (Protect-M6Text ([IO.File]::ReadAllText($pocFiles[0].FullName))))
         $report.issue15Poc = [ordered]@{
-            sourceSha=$report.sourceSha; category='SqlM2'; caseFilter='Issue15ApproveConnectionSqlTests'; total=$pocTrx.total
+            sourceSha=$report.sourceSha; category='SqlIssue15'; total=$pocTrx.total
             passed=$pocTrx.passed; nonPassed=$pocTrx.nonPassed; exitCode=$pocExitCode
         }
         if ($pocExitCode -ne 0 -or $pocTrx.total -ne 1 -or $pocTrx.passed -ne 1 -or $pocTrx.nonPassed -ne 0) {

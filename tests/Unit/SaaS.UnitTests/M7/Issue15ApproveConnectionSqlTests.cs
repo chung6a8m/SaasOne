@@ -7,7 +7,7 @@ namespace SaaS.UnitTests;
 // Supplemental SQL/HTTPS POC, not an eighth mandatory M7 case.
 // The unchanged M7 inventory must remain exactly seven cases.
 [Collection("M7 SQL")]
-[Trait("Category", "SqlM2")]
+[Trait("Category", "SqlIssue15")]
 public sealed class Issue15ApproveConnectionSqlTests(M7SqlFixture fixture) : IClassFixture<M7SqlFixture>
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -37,13 +37,19 @@ public sealed class Issue15ApproveConnectionSqlTests(M7SqlFixture fixture) : ICl
         var observed = profile.Snapshot();
         // RED: 2 routing + 1 standalone customer profile + 1 Orders UoW
         // + 4 fresh full platform/native validations = 8; previously 12.
-        Assert.Equal(8, observed.Open.Count);
         Assert.Equal(0, observed.Open.Errors);
         Assert.Equal(0, observed.Pending);
-        var native = Assert.Single(profile.SnapshotStages(), x => x.Stage == "identity.native");
-        var platform = Assert.Single(profile.SnapshotStages(), x => x.Stage == "identity.fresh");
+        var stageSql = profile.SnapshotStages();
+        var native = Assert.Single(stageSql, x => x.Stage == "identity.native");
+        var platform = Assert.Single(stageSql, x => x.Stage == "identity.fresh");
         Assert.Equal(4, native.Open.Count);
         Assert.Equal(0, platform.Open.Count);
+        // Include every physical open (including the release-barrier gate),
+        // rather than silently excluding unanticipated request middleware.
+        var stageCounts = string.Join(", ", stageSql.OrderBy(x => x.Stage, StringComparer.Ordinal)
+            .Select(x => x.Stage + "=" + x.Open.Count));
+        Assert.True(observed.Open.Count == 8,
+            $"Expected 8 physical SQL opens; observed {observed.Open.Count}; stage counts: {stageCounts}");
         Assert.True(native.Command.Count >= 4);
         Assert.True(platform.Command.Count >= 8,
             "Every validation must re-read platform authority and post-native tenant.");
