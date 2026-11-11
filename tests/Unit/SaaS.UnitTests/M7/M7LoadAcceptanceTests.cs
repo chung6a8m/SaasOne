@@ -61,10 +61,13 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
                 [(await fixture.GrantAsync(fixture.Reviewers[0], slug)).AccessToken, (await fixture.GrantAsync(fixture.Reviewers[1], slug)).AccessToken];
         }));
         await fixture.DemandMatrixAsync(ct);
-        // Enabled only during the unchanged 100-VU load window. Middleware
-        // maps route shape to fixed tenant/operation labels, never raw IDs.
-        using var attribution = M7OperationAttribution.Enable();
-        using var sqlProfile = await M7SqlProfileSession.StartAsync(fixture.Environment.Admin, ct);
+        // Benchmark-only mode is enabled solely by the pinned, disposable
+        // Issue15 A/B SQL fixture. The baseline workload and 100 VU remain
+        // identical, but all SQL Activity/DMV profilers are absent in BOTH
+        // control and candidate. Regular M7/Issue15 suites remain unchanged.
+        var noProfiler = System.Environment.GetEnvironmentVariable("SAAS_M7_AB_NO_PROFILER") == "1";
+        using var attribution = noProfiler ? null : M7OperationAttribution.Enable();
+        using var sqlProfile = noProfiler ? null : await M7SqlProfileSession.StartAsync(fixture.Environment.Admin, ct);
         using var process = Process.GetCurrentProcess();
         var cpuStart = process.TotalProcessorTime;
         var gcStart = Enumerable.Range(0, 3).Select(GC.CollectionCount).ToArray();
@@ -81,7 +84,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
         var cpuSeconds = (process.TotalProcessorTime - cpuStart).TotalSeconds;
         var gcCollections = Enumerable.Range(0, 3).Select(i => GC.CollectionCount(i) - gcStart[i]).ToArray();
         var peakWorkingSet = process.PeakWorkingSet64;
-        await sqlProfile.CompleteAsync(_samples.Count, CancellationToken.None);
+        if (sqlProfile is not null) await sqlProfile.CompleteAsync(_samples.Count, CancellationToken.None);
         // Capture process resources before post-load integrity queries, matching the timer.
         var integrity = await VerifyPersistedAsync(CancellationToken.None);
         var samples = _samples.ToArray();
@@ -110,6 +113,7 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
             schemaVersion = 1, sourceSha = M7Evidence.SourceSha,
             mode = System.Environment.GetEnvironmentVariable("SAAS_M7_MODE") ?? "Baseline",
             status = valid ? "PASS" : "FAIL", acceptance = "NOT_ASSESSED", config,
+            sqlProfilerEnabled = !noProfiler,
             startedUtc = started, completedUtc = DateTimeOffset.UtcNow, elapsedIncludingDrainSeconds = elapsed,
             transport = "Kestrel HTTPS; native Orchard/OpenIddict; real SQL Server",
             topology = "Load generator and application share one process; SQL Server is a separate local container. Not a production capacity claim.",

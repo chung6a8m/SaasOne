@@ -1,6 +1,6 @@
 # Only a fresh, disposable and pinned SQL Server is accepted. No external DB target.
 [CmdletBinding()]
-param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode = 'Baseline', [switch]$Issue15Poc)
+param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode = 'Baseline', [switch]$Issue15Poc, [switch]$AbLoadOnly)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -14,7 +14,9 @@ $previous = @{}
 Get-ChildItem Env: | Where-Object { $_.Name -like 'SAAS_*' -or $_.Name -like 'MSSQL_*' } | ForEach-Object { $previous[$_.Name] = $_.Value }
 $started = $false
 $code = 1
-$required = @(Get-Content (Join-Path $PSScriptRoot 'm7-mandatory-cases.json') -Raw | ConvertFrom-Json)
+if ($AbLoadOnly -and $Issue15Poc) { throw 'A/B load-only and Issue15 supplemental inventories cannot be mixed.' }
+$abName = 'SaaS.UnitTests.M7SqlAcceptanceTests.Hundred_virtual_users_report_nonempty_read_write_approval_baseline'
+$required = if ($AbLoadOnly) { @($abName) } else { @(Get-Content (Join-Path $PSScriptRoot 'm7-mandatory-cases.json') -Raw | ConvertFrom-Json) }
 $report = [ordered]@{
     schemaVersion=1; scope='M7 four-tenant real SQL and HTTPS'; mode=$Mode; acceptance='NOT_ASSESSED'; status='FAIL'; sourceSha=$null
     image=$image; sqlVersion='16.0.4305.5'; digest=$null; testExitCode=$null; cleanupExitCode=$null
@@ -61,10 +63,14 @@ try {
     $env:SAAS_M7_PRODUCT_DLL = $product
     $env:SAAS_M7_LOAD_CONFIG = Join-Path $root 'tests/Load/m7-baseline.json'
     $env:SAAS_M7_MODE = $Mode
+    if ($AbLoadOnly) { $env:SAAS_M7_AB_NO_PROFILER = '1' }
     $rawLog = Join-Path $root 'artifacts/test-results/m7/test.raw.log'
     # The POC shares the ONE M7 fixture (and original seven-case inventory)
     # so a second fixture cannot race against the same fixed SQL databases.
-    $filter = if ($Issue15Poc) { 'Category=SqlM7|Category=SqlIssue15' } else { 'Category=SqlM7' }
+    $filter = if ($AbLoadOnly) { 'FullyQualifiedName~Hundred_virtual_users_report_nonempty_read_write_approval_baseline' }
+        elseif ($Issue15Poc) { 'Category=SqlM7|Category=SqlIssue15' }
+        else { 'Category=SqlM7' }
+    if ($AbLoadOnly) { $report.scope = 'Issue15 A/B load-only benchmark with SQL profiler OFF' }
     & dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter $filter --logger trx --results-directory artifacts/test-results/m7 *> $rawLog
     $report.testExitCode = $LASTEXITCODE
     $safeLog = Protect-M6Text ([IO.File]::ReadAllText($rawLog))
@@ -103,12 +109,23 @@ try {
         [IO.File]::WriteAllText((Join-Path $out 'issue15-tests.trx'),
             (Protect-M6Text ([IO.File]::ReadAllText($files[0].FullName))))
     }
-    foreach ($file in @('matrix.json','product-runtime.json','load.json','load-samples.json')) {
+    $reportsToCheck = if ($AbLoadOnly) { @('load.json','load-samples.json') }
+        else { @('matrix.json','product-runtime.json','load.json','load-samples.json') }
+    foreach ($file in $reportsToCheck) {
         if (-not (Test-Path (Join-Path $out $file))) { throw "Missing mandatory M7 report: $file" }
         $value = Get-Content (Join-Path $out $file) -Raw | ConvertFrom-Json
         if ($value.sourceSha -cne $report.sourceSha) { throw 'M7 source evidence mismatch.' }
     }
 
+    if ($AbLoadOnly) {
+        $load = Get-Content (Join-Path $out 'load.json') -Raw | ConvertFrom-Json
+        if ($report.total -ne 1 -or $report.passed -ne 1 -or $report.testExitCode -ne 0
+            -or $load.status -cne 'PASS' -or $load.sqlProfilerEnabled -ne $false
+            -or $load.config.virtualUsersPerTenant -ne 25 -or $load.config.measureSeconds -ne 120
+            -or $load.peakVirtualUsers -ne 100 -or @($load.rows).Count -ne 22) {
+            throw 'A/B load-only run is not a valid no-profiler original 100-VU test.'
+        }
+    }
     if ($Issue15Poc -and ($report.issue15Poc.passed -ne 1 -or $report.testExitCode -ne 0)) {
         throw 'Issue15 Approve physical-open gate failed; mandatory M7 outcomes remain recorded separately.'
     }
