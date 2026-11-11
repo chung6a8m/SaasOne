@@ -71,8 +71,8 @@ internal sealed class M7StageProfile : IDisposable
                 {
                     var duration = Math.Max(0, (ended - started).TotalMilliseconds);
                     Add(_holds, name, duration);
-                    if (context is { } label)
-                        AddOperation(label.Tenant, label.Operation, name, duration);
+                    if (context is { } holder)
+                        AddOperation(holder.Tenant, holder.Operation, name, duration);
                 }
             }
         }
