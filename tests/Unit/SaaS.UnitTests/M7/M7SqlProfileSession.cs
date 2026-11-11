@@ -105,7 +105,9 @@ internal sealed class M7SqlProfileSession : IDisposable
             scope = "Entire load window including ramp and drain, after token issuance and before integrity queries. Dedicated disposable SQL instance.",
             interpretation = "Client totalMs sums concurrent operations, not wall-clock/CPU. Command counts/timings INCLUDE observation queries; application command count subtracts successful observation-query count only. Opens EXCLUDE the observation connection opened before the observer. Reader consumption is not in command timings. Server waits/counters include background and administrative snapshot traffic. Stage SQL groups use the innermost named Activity; only additional operationStageTimings are classified by fixed test-only tenant/operation labels. Stage durations overlap, do NOT add; Orders lock holds approximate acquired-to-transaction-scope-end, NOT server-confirmed lock release/owner. Sampling and sanitized middleware add overhead.",
             beforeUtc = _before.Utc, afterUtc = after.Utc, requests, client, stageTimings,
-            operationStageTimings = stageTimings.ByOperation, sqlByStage,
+            operationStageTimings = stageTimings.ByOperation,
+            operationLockCoverage = stageTimings.LockCoverage,
+            sqlByStage,
             connectionOpensPerRequest = requests == 0 ? 0 : client.Open.Count / (double)requests,
             applicationCommandCount = client.Command.Count - _samples,
             commandsPerRequest = requests == 0 ? 0 : (client.Command.Count - _samples) / (double)requests,
@@ -119,6 +121,10 @@ internal sealed class M7SqlProfileSession : IDisposable
             },
             waits, counters
         });
+        Assert.True(stageTimings.LockCoverage.ExpectedCells == 22
+            && stageTimings.LockCoverage.CompleteCells == 22
+            && stageTimings.LockCoverage.Missing.Length == 0,
+            "Missing required per-operation lock wait/hold spans. See sanitized operationLockCoverage.Missing; missing is not 0 ms.");
         Assert.True(!_samplingFailed && _samples > 0, "SQL blocking observation did not complete successfully.");
         Assert.True(client.Open.Count > 0 && client.Command.Count > _samples, "SQL profile must observe actual application operations.");
     }

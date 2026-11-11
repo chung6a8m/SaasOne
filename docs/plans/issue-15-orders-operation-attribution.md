@@ -26,3 +26,12 @@ Issue #15's initial **8-physical-open Approve objective** has been measured at t
 ## Security and ownership
 
 No new SqlClient session, pooled connection, request-wide permission/Allow cache, privilege, transaction or lock. This is test-only runtime observation, not an authorization source. Test-only tags come from a closed literal vocabulary; no untrusted path segment is exported. On malformed/other routes attribution is absent, not a fallback to `Default`. Always retain historical M7 target failures, PR #16 Draft review boundary and production rollout block.
+
+
+## Finding P2 — lock-stage inventory, RED contract (2026-11-11)
+
+Prior M7 session coverage only checked the presence of `orders.read/write` for 22 tenant/operation cells; missing required lock spans could be invisible. Add a **separate** closed-vocabulary, test-only `LockCoverage` inventory with `ExpectedCells=22`, `Missing` entries containing **only** Tenant/Operation/Stage labels; never synthesize a numerical 0-ms lock sample for missing spans. For every List cell with a populated page, demand `orders.lock.page` and `orders.hold.page`; for Detail demand `orders.lock.resource` and `orders.hold.resource`; and for write Create/Edit/Submit/Approve demand both `orders.lock.command`/`orders.hold.command` and `orders.lock.resource`/`orders.hold.resource`. With the unchanged 100-VU closed-loop workload, every List operation reads its just-created order and must have a nonempty page; unexpected absence is a **failed diagnostic gate**, not a reported zero or a skipped test. No SQL command or runtime lock change.
+
+New synthetic M0 tests prove (1) missing List page/hold samples are explicitly reported without fake values and (2) observing a resource lock alone does not falsely certify command lock/hold. Commit tests FIRST and capture assertion failures against the original report, then implement within `M7StageProfile` and gate in `M7SqlProfileSession` with the original 7+1 real SQL fixture and unchanged load config. This is diagnostic coverage, not server-confirmed lock release or M7 performance acceptance.
+
+CI note: this stacked PR is temporarily targeted at `main` solely for source-bound original GitHub Actions `pull_request` workflows while RED and GREEN evidence is collected. Re-target to the PR #16 branch after verification; never merge diagnostics ahead of its approved dependency.
