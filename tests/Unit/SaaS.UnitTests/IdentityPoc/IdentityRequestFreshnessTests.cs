@@ -44,9 +44,10 @@ public sealed partial class M2IdentityPocTests
                 Assert.Equal(http.UserId, verified.Family.GlobalUserId);
                 var fresh = Assert.Single(measured.SnapshotStages(), x => x.Stage == "identity.fresh");
                 var native = Assert.Single(measured.SnapshotStages(), x => x.Stage == "identity.native");
-                // Each invocation must open a NEW runtime platform login and a
-                // NEW Default issuer scope, including inside the same request.
-                Assert.Equal(1, fresh.Open.Count);
+                // Every invocation must open ONE NEW unpooled SQL login owned
+                // by the native YesSQL scope. Platform EF borrows it, never
+                // reuses that SQL session for the next validation.
+                Assert.Equal(0, fresh.Open.Count);
                 Assert.Equal(1, native.Open.Count);
                 Assert.True(fresh.Command.Count >= 2, "Initial and post-native current tenant reads cannot be cached.");
                 Assert.True(native.Command.Count > 0, "Native account/grant/token source must be read.");
