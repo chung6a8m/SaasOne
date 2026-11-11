@@ -225,21 +225,33 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         if (ids.Length == 0) return items;
 
         // Exactly TWO Orders/Revisions SQL SELECTs per nonempty page:
-        // the existing page-ID query before ordered shared resource locks,
-        // then this one bounded, nontracking integrity projection AFTER all
-        // shared locks and the fresh post-lock authority recheck. The revision
-        // subqueries inspect ALL history; they are not a cached summary.
-        var locked = await db.Orders.AsNoTracking()
-            .Where(row => ids.Contains(row.Id))
-            .Select(row => new
+        // page IDs before locks, then one set-based joined integrity projection
+        // AFTER all 51 ordered Shared locks and fresh post-lock authority.
+        // Group ALL selected revisions once (including old approval markers),
+        // instead of two separate correlated scans per Order. The left joins
+        // deliberately preserve missing latest/history as 503, NOT 404.
+        var groupedHistory = db.Revisions.AsNoTracking()
+            .Where(revision => ids.Contains(revision.OrderId))
+            .GroupBy(revision => revision.OrderId)
+            .Select(group => new
             {
-                Row = row,
-                Latest = db.Revisions.AsNoTracking()
-                    .Where(revision => revision.OrderId == row.Id && revision.Revision == row.Revision)
-                    .SingleOrDefault(),
-                HistoryCount = db.Revisions.LongCount(revision => revision.OrderId == row.Id),
-                HistoricalApproval = db.Revisions.Any(revision =>
-                    revision.OrderId == row.Id && revision.ApprovalRequired)
+                OrderId = group.Key,
+                Count = group.LongCount(),
+                HistoricalApproval = group.Max(revision => revision.ApprovalRequired ? 1 : 0)
+            });
+        var locked = await (
+            from row in db.Orders.AsNoTracking()
+            where ids.Contains(row.Id)
+            join last in db.Revisions.AsNoTracking()
+                on new { OrderId = row.Id, row.Revision } equals new { last.OrderId, last.Revision } into lasts
+            from latest in lasts.DefaultIfEmpty()
+            join summary in groupedHistory on row.Id equals summary.OrderId into histories
+            from history in histories.DefaultIfEmpty()
+            select new
+            {
+                Row = row, Latest = latest,
+                HistoryCount = history == null ? 0L : history.Count,
+                HistoricalApproval = history != null && history.HistoricalApproval != 0
             }).ToDictionaryAsync(x => x.Row.Id, ct);
 
         // Keep the page-ID order (including the 51st pagination sentinel)

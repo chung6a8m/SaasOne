@@ -39,10 +39,9 @@ internal static class M4ListHistoryScaleProbe
             Assert.True(report.LegacyThreeQueries.LogicalReads > 0, "Missing actual SQL Server grouped-query logical-read evidence.");
             Assert.True(report.ProjectionPlan.Operators > 0 && report.GroupedHistoryPlan.Operators > 0,
                 "Missing actual SQL Server XML query-plan operators.");
-            // RED: the old correlated Count/Any implementation performs
-            // considerably MORE logical reads than three legacy SELECTs for
-            // 50 and 1000 revisions per order. A round-trip reduction alone
-            // must not justify a read-amplification regression.
+            // A new joined GROUP BY projection must stay within the measured
+            // logical-read budget of the prior three-query implementation
+            // at BOTH 50 and 1000 revisions per order.
             Assert.True(report.Projection.LogicalReads <= report.LegacyThreeQueries.LogicalReads,
                 $"Deep-history projection read amplification at depth={depth}: " +
                 $"projection {report.Projection.LogicalReads}, legacy {report.LegacyThreeQueries.LogicalReads}.");
@@ -133,18 +132,31 @@ internal static class M4ListHistoryScaleProbe
                 Count = group.LongCount(),
                 HistoricalMarker = group.Max(x => x.ApprovalRequired ? 1 : 0)
             });
-        var projection = db.Orders.AsNoTracking()
-            .Where(row => ids.Contains(row.Id))
-            .Select(row => new
+        // Same EF LINQ shape as the production locked List projection,
+        // but executed outside the app transaction for plan/IO comparison.
+        var groupedHistory = db.Revisions.AsNoTracking()
+            .Where(revision => ids.Contains(revision.OrderId))
+            .GroupBy(revision => revision.OrderId)
+            .Select(group => new
             {
-                Row = row,
-                Latest = db.Revisions.AsNoTracking()
-                    .Where(revision => revision.OrderId == row.Id && revision.Revision == row.Revision)
-                    .SingleOrDefault(),
-                HistoryCount = db.Revisions.LongCount(revision => revision.OrderId == row.Id),
-                HistoricalApproval = db.Revisions.Any(revision =>
-                    revision.OrderId == row.Id && revision.ApprovalRequired)
+                OrderId = group.Key,
+                Count = group.LongCount(),
+                HistoricalApproval = group.Max(revision => revision.ApprovalRequired ? 1 : 0)
             });
+        var projection =
+            from row in db.Orders.AsNoTracking()
+            where ids.Contains(row.Id)
+            join last in db.Revisions.AsNoTracking()
+                on new { OrderId = row.Id, row.Revision } equals new { last.OrderId, last.Revision } into lasts
+            from latest in lasts.DefaultIfEmpty()
+            join summary in groupedHistory on row.Id equals summary.OrderId into histories
+            from history in histories.DefaultIfEmpty()
+            select new
+            {
+                Row = row, Latest = latest,
+                HistoryCount = history == null ? 0L : history.Count,
+                HistoricalApproval = history != null && history.HistoricalApproval != 0
+            };
 
         // ToQueryString creates real EF SQL with in-process parameter
         // declarations for exactly the same 51 fixture IDs. Never emit it.
