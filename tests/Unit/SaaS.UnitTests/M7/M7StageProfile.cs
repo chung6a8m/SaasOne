@@ -106,15 +106,55 @@ internal sealed class M7StageProfile : IDisposable
                     sorted.Length, sorted.Sum(), Percentile(.50), Percentile(.95), Percentile(.99), sorted[^1]);
             }).ToArray();
 
+
+    // A present request stage is not proof that the required SQL locks were
+    // observed. Missing is recorded as missing, NEVER as a measured 0-ms lock.
+    // This inventory is test-only, and contains only allowlisted labels.
+    private static M7LockCoverage CheckLockCoverage(M7OperationStageMetric[] stages)
+    {
+        var available = stages.Where(x => x.Count > 0)
+            .Select(x => (x.Tenant, x.Operation, x.Stage)).ToHashSet();
+        var missing = new List<M7MissingLockStage>();
+        var complete = 0;
+        foreach (var tenant in new[] { "alpha", "beta", "gamma", "delta" })
+        foreach (var operation in tenant is "beta" or "gamma"
+            ? new[] { "create", "edit", "submit", "approve", "detail", "list" }
+            : new[] { "create", "edit", "submit", "detail", "list" })
+        {
+            var before = missing.Count;
+            var required = operation switch
+            {
+                "list" => new[] { "orders.lock.page", "orders.hold.page" },
+                "detail" => new[] { "orders.lock.resource", "orders.hold.resource" },
+                _ => new[] {
+                    "orders.lock.command", "orders.hold.command",
+                    "orders.lock.resource", "orders.hold.resource"
+                }
+            };
+            foreach (var stage in required)
+                if (!available.Contains((tenant, operation, stage)))
+                    missing.Add(new(tenant, operation, stage));
+            if (missing.Count == before) complete++;
+        }
+        return new(22, complete, missing.ToArray());
+    }
+
     internal M7StageReport Snapshot()
     {
-        lock (_gate) return new(Series(_stages), Series(_holds), OperationSeries());
+        lock (_gate)
+        {
+            var operationStages = OperationSeries();
+            return new(Series(_stages), Series(_holds), operationStages, CheckLockCoverage(operationStages));
+        }
     }
     public void Dispose() => _listener.Dispose();
 }
 
 internal sealed record M7StageMetric(string Stage, int Count, double TotalMs,
     double P50Ms, double P95Ms, double P99Ms, double MaxMs);
-internal sealed record M7StageReport(M7StageMetric[] Stages, M7StageMetric[] Holds, M7OperationStageMetric[] ByOperation);
+internal sealed record M7StageReport(M7StageMetric[] Stages, M7StageMetric[] Holds,
+    M7OperationStageMetric[] ByOperation, M7LockCoverage LockCoverage);
+internal sealed record M7LockCoverage(int ExpectedCells, int CompleteCells, M7MissingLockStage[] Missing);
+internal sealed record M7MissingLockStage(string Tenant, string Operation, string Stage);
 internal sealed record M7OperationStageMetric(string Tenant, string Operation, string Stage, int Count,
     double TotalMs, double P50Ms, double P95Ms, double P99Ms, double MaxMs);
