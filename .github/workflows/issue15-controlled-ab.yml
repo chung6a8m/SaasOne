@@ -1,0 +1,80 @@
+name: Issue 15 controlled no-profiler List A/B
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/issue15-ab-evaluate.ps1'
+      - 'scripts/m7-sql-fixture.ps1'
+      - 'tests/Unit/SaaS.UnitTests/M7/M7LoadAcceptanceTests.cs'
+      - '.github/workflows/issue15-controlled-ab.yml'
+      - 'docs/plans/issue-15-controlled-ab.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: issue15-controlled-ab
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Verify pinned source revisions, shell syntax and frozen workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CONTROL_SHA=e7aab2c07c3d8807ed99cb8f515c2f84638b49d2
+          export CANDIDATE_SHA=37d3d9fd42881ce1476a1e891331d8fff30598fd
+          git cat-file -e "$CONTROL_SHA^{commit}"
+          git cat-file -e "$CANDIDATE_SHA^{commit}"
+          git show "$CONTROL_SHA:tests/Load/m7-baseline.json" | cmp - tests/Load/m7-baseline.json
+          git show "$CONTROL_SHA:tests/Load/m7-targets.json" | cmp - tests/Load/m7-targets.json
+          sha256sum tests/Load/m7-baseline.json tests/Load/m7-targets.json
+          pwsh -NoProfile -File scripts/check-powershell-syntax.ps1
+          dotnet restore tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --locked-mode
+          pwsh -NoProfile -File scripts/check-m7-product.ps1
+      - name: Six alternating trials A B B A A B on one runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONTROL_SHA=e7aab2c07c3d8807ed99cb8f515c2f84638b49d2
+          CANDIDATE_SHA=37d3d9fd42881ce1476a1e891331d8fff30598fd
+          SOURCE=src/Modules/SaaS.Orders/OrderService.cs
+          mkdir -p artifacts/issue15-ab
+          i=0
+          for VARIANT in A B B A A B; do
+            i=$((i+1))
+            NUMBER=$(printf 'trial-%02d' "$i")
+            if [[ "$VARIANT" == "A" ]]; then REF="$CONTROL_SHA"; else REF="$CANDIDATE_SHA"; fi
+            echo "Trial $NUMBER: variant=$VARIANT source=$REF"
+            git show "$REF:$SOURCE" > "$SOURCE"
+            SHA256=$(sha256sum "$SOURCE" | awk '{print $1}')
+            dotnet build tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj -c Release --no-restore
+            pwsh -NoProfile -File scripts/m7-sql-fixture.ps1 -Mode Candidate -AbLoadOnly
+            mkdir -p "artifacts/issue15-ab/$NUMBER"
+            cp artifacts/m7/evidence/load.json "artifacts/issue15-ab/$NUMBER/load.json"
+            cp artifacts/m7/evidence/load-samples.json "artifacts/issue15-ab/$NUMBER/load-samples.json"
+            cp artifacts/m7/evidence/sql.json "artifacts/issue15-ab/$NUMBER/sql.json"
+            python3 - "$NUMBER" "$VARIANT" "$REF" "$SHA256" "$GITHUB_SHA" <<'PY'
+          import json,sys
+          number,variant,source,source_hash,harness=sys.argv[1:]
+          with open(f"artifacts/issue15-ab/{number}/source.json","w",encoding="utf-8") as f:
+              json.dump(dict(trial=number,variant=variant,sourceCommitSha=source,
+                  sourceFileSha256=source_hash,harnessSha=harness),f,indent=2)
+          PY
+          done
+          git show "$CONTROL_SHA:$SOURCE" > "$SOURCE"
+          pwsh -NoProfile -File scripts/issue15-ab-evaluate.ps1 -ControlSha "$CONTROL_SHA" -CandidateSha "$CANDIDATE_SHA"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: issue15-controlled-ab
+          path: |
+            artifacts/issue15-ab/
+          if-no-files-found: error
+          retention-days: 7
