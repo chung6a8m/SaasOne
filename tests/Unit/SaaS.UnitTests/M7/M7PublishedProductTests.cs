@@ -10,6 +10,7 @@ namespace SaaS.UnitTests;
 public sealed partial class M7SqlAcceptanceTests
 {
     [Fact]
+    [Trait("Category", "SqlM7")]
     public async Task Published_independent_product_uses_runtime_only_and_fails_closed()
     {
         var connection = new TenancyConnections().Platform("runtime");

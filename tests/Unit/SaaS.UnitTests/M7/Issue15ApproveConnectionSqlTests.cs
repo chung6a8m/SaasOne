@@ -4,15 +4,12 @@ using Xunit;
 
 namespace SaaS.UnitTests;
 
-// Supplemental SQL/HTTPS POC, not an eighth mandatory M7 case.
-// The unchanged M7 inventory must remain exactly seven cases.
-[Collection("M7 SQL")]
-[Trait("Category", "SqlIssue15")]
-public sealed class Issue15ApproveConnectionSqlTests(M7SqlFixture fixture) : IClassFixture<M7SqlFixture>
+// Supplemental SQL/HTTPS POC lives in the SAME fixture as the seven
+// mandatory M7 tests, but has its own category and manifest check.
+public sealed partial class M7SqlAcceptanceTests
 {
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
     [Fact]
+    [Trait("Category", "SqlIssue15")]
     public async Task Approve_uses_eight_physical_logins_with_fresh_authority_and_one_owned_orders_transaction()
     {
         // Real Kestrel/HTTPS, native Orchard+YesSQL, EF, ACL and SQL Server.
