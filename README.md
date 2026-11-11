@@ -2,6 +2,8 @@
 
 Reusable Orchard Core multi-tenant SaaS foundation. The reviewed [roadmap](docs/roadmap/saas-orchard-roadmap-v1.md), revision 1.3, is normative. This branch implements M0 foundation, M1 tenancy/provisioning, M2 central identity, M3 authorization/lifecycle/audit, M4 end-to-end Orders and **M5 revision-bound OrderApprovals**.
 
+**Security visualization:** [Trust boundaries, request authorization, SQL locks, recovery, and residual risks](docs/security/security-architecture-visual.md).
+
 Default uses a fixed platform database and native Orchard Users/OpenIddict. Customers have isolated databases, independent cookies, tenant-bound API credentials and current membership/session checks. M3 adds roles, Allow/Deny/Unspecified, user overrides, safe administration and guarded operations. M4 adds Orders screens/API using one service, atomic audit/history/receipts, optimistic concurrency and currently authorized replay. M5 adds real one-level approval requests/decisions, optional-plan actions and persisted-history integration with the same lifecycle/recovery protocol. There are no public provisioning/operations or customer CMS administration endpoints.
 
 Implementation verification, owner acceptance and merge are separate. Read [M5 verification](docs/verification/m5.md) and [PR #8](https://github.com/chung6a8m/SaasOne/pull/8). ADR 0001–0008 are not automatically promoted to Accepted. No production deployment is implied. SQL restore/release rehearsal and load/reuse acceptance remain M6–M7.
