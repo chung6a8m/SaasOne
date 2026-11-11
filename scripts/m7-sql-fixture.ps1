@@ -1,6 +1,6 @@
 # Only a fresh, disposable and pinned SQL Server is accepted. No external DB target.
 [CmdletBinding()]
-param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode = 'Baseline')
+param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode = 'Baseline', [switch]$Issue15Poc)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -79,6 +79,32 @@ try {
         if (-not (Test-Path (Join-Path $out $file))) { throw "Missing mandatory M7 report: $file" }
         $value = Get-Content (Join-Path $out $file) -Raw | ConvertFrom-Json
         if ($value.sourceSha -cne $report.sourceSha) { throw 'M7 source evidence mismatch.' }
+    }
+
+    if ($Issue15Poc) {
+        # Supplemental POC is intentionally NOT part of Category=SqlM7:
+        # the unchanged seven-case manifest is checked above, exactly.
+        $pocDirectory = Join-Path $root 'artifacts/test-results/issue15'
+        if (Test-Path $pocDirectory) { Remove-Item $pocDirectory -Recurse -Force }
+        [void](New-Item $pocDirectory -ItemType Directory -Force)
+        $pocRawLog = Join-Path $pocDirectory 'test.raw.log'
+        & dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter 'Category=SqlIssue15' --logger trx --results-directory $pocDirectory *> $pocRawLog
+        $pocExitCode = $LASTEXITCODE
+        $pocSafeLog = Protect-M6Text ([IO.File]::ReadAllText($pocRawLog))
+        [IO.File]::WriteAllText((Join-Path $out 'issue15-test.log'), $pocSafeLog)
+        Write-Host $pocSafeLog
+        $pocFiles = @(Get-ChildItem $pocDirectory -Filter *.trx -File)
+        if ($pocFiles.Count -ne 1) { throw 'Issue15 POC requires exactly one fresh TRX.' }
+        $pocTrx = Read-M6Trx $pocFiles[0].FullName
+        [IO.File]::WriteAllText((Join-Path $out 'issue15-tests.trx'),
+            (Protect-M6Text ([IO.File]::ReadAllText($pocFiles[0].FullName))))
+        $report.issue15Poc = [ordered]@{
+            sourceSha=$report.sourceSha; category='SqlIssue15'; total=$pocTrx.total
+            passed=$pocTrx.passed; nonPassed=$pocTrx.nonPassed; exitCode=$pocExitCode
+        }
+        if ($pocExitCode -ne 0 -or $pocTrx.total -ne 1 -or $pocTrx.passed -ne 1 -or $pocTrx.nonPassed -ne 0) {
+            throw 'Issue15 physical-open and fresh-authority SQL POC failed.'
+        }
     }
     $code=0
 } catch {
