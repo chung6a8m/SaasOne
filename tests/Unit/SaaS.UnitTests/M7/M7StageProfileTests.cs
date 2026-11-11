@@ -92,6 +92,64 @@ public sealed class M7StageProfileTests
     }
 
     [Fact]
+    public void List_lock_stage_coverage_reports_missing_page_wait_and_hold_without_fabricating_zero()
+    {
+        using var observer = new M7StageProfile();
+        using var source = new ActivitySource("SaaS.RequestStages");
+        using (new Activity("m7.sanitized-request")
+            .SetTag("m7.tenant", "alpha")
+            .SetTag("m7.operation", "list").Start())
+            using (source.StartActivity("orders.read")) { }
+
+        // RED: a request-stage sample does NOT prove page-lock instrumentation.
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(observer.Snapshot()));
+        var coverage = json.RootElement.GetProperty("LockCoverage");
+        Assert.Equal(22, coverage.GetProperty("ExpectedCells").GetInt32());
+        var missing = coverage.GetProperty("Missing").EnumerateArray().ToArray();
+        Assert.Contains(missing, x => x.GetProperty("Tenant").GetString() == "alpha"
+            && x.GetProperty("Operation").GetString() == "list"
+            && x.GetProperty("Stage").GetString() == "orders.lock.page");
+        Assert.Contains(missing, x => x.GetProperty("Tenant").GetString() == "alpha"
+            && x.GetProperty("Operation").GetString() == "list"
+            && x.GetProperty("Stage").GetString() == "orders.hold.page");
+        // Missing is not a measured 0-ms wait or hold.
+        Assert.DoesNotContain(json.RootElement.GetProperty("ByOperation").EnumerateArray(),
+            x => x.GetProperty("Tenant").GetString() == "alpha"
+                && x.GetProperty("Operation").GetString() == "list"
+                && x.GetProperty("Stage").GetString() == "orders.hold.page");
+    }
+
+    [Fact]
+    public void Write_lock_stage_coverage_requires_command_and_resource_hold_independently()
+    {
+        using var observer = new M7StageProfile();
+        using var source = new ActivitySource("SaaS.RequestStages");
+        using (new Activity("m7.sanitized-request")
+            .SetTag("m7.tenant", "beta")
+            .SetTag("m7.operation", "approve").Start())
+        {
+            using (source.StartActivity("orders.write"))
+            using (source.StartActivity("tenant.transaction"))
+            using (var resource = source.StartActivity("orders.lock.resource"))
+                resource?.AddEvent(new ActivityEvent("acquired"));
+        }
+
+        // Resource was acquired and observed to end with its owner transaction,
+        // but command lock was never observed: report that as MISSING, not zero.
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(observer.Snapshot()));
+        var missing = json.RootElement.GetProperty("LockCoverage").GetProperty("Missing").EnumerateArray().ToArray();
+        Assert.Contains(missing, x => x.GetProperty("Tenant").GetString() == "beta"
+            && x.GetProperty("Operation").GetString() == "approve"
+            && x.GetProperty("Stage").GetString() == "orders.lock.command");
+        Assert.Contains(missing, x => x.GetProperty("Tenant").GetString() == "beta"
+            && x.GetProperty("Operation").GetString() == "approve"
+            && x.GetProperty("Stage").GetString() == "orders.hold.command");
+        Assert.DoesNotContain(missing, x => x.GetProperty("Tenant").GetString() == "beta"
+            && x.GetProperty("Operation").GetString() == "approve"
+            && x.GetProperty("Stage").GetString() is "orders.lock.resource" or "orders.hold.resource");
+    }
+
+    [Fact]
     public void Failed_lock_acquisition_never_creates_a_hold_sample()
     {
         using var profile = new M7StageProfile();
