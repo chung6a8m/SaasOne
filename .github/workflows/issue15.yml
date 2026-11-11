@@ -1,0 +1,61 @@
+name: Issue 15 bounded native/EF authority SQL POC
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/Platform/SaaS.Identity/**'
+      - 'src/Platform/SaaS.Tenancy/**'
+      - 'src/SaaS.Web/**'
+      - 'tests/Unit/SaaS.UnitTests/**'
+      - 'scripts/m7-sql-fixture.ps1'
+      - '.github/workflows/issue15.yml'
+      - 'docs/plans/issue-15-shared-authority-connection.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: issue15-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sql-poc:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Syntax and locked real-SQL test build
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/check-powershell-syntax.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj -c Release --no-restore
+          exit $LASTEXITCODE
+      - name: Publish independent product with frozen package graph
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/check-m7-product.ps1
+          exit $LASTEXITCODE
+      - name: Run original seven M7 SQL cases and isolated Issue15 Approve POC
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/m7-sql-fixture.ps1 -Mode Candidate -Issue15Poc
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: issue15-sql-poc-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/m7/evidence/sql.json
+            artifacts/m7/evidence/issue15-test.log
+            artifacts/m7/evidence/issue15-tests.trx
+            artifacts/m7/evidence/tests.trx
+            artifacts/m7/evidence/load.json
+            artifacts/m7/evidence/sql-profile.json
+            artifacts/m7/product/report.json
+          if-no-files-found: warn
+          retention-days: 7

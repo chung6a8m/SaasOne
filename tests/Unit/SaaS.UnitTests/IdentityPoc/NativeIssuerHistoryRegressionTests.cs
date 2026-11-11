@@ -108,7 +108,7 @@ public sealed partial class M2IdentityPocTests
         var subject = Binding(wrongSubject);
         var application = Binding(wrongApplication);
         var beta = Binding(independent);
-        var store = new DefaultIssuerStore(http.Shells, http.Clock);
+        var store = new DefaultIssuerStore(http.Shells, http.Clock, new SaaS.Tenancy.Data.TenancyConnections());
         var ct = TestContext.Current.CancellationToken;
         await store.ValidateAuthorizationAsync(subject.Authorization, http.Subject, ct);
         await store.ValidateAuthorizationAsync(application.Authorization, http.Subject, ct);

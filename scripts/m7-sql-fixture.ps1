@@ -1,6 +1,6 @@
 # Only a fresh, disposable and pinned SQL Server is accepted. No external DB target.
 [CmdletBinding()]
-param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode = 'Baseline')
+param([ValidateSet('Baseline','Candidate','Acceptance')][string]$Mode = 'Baseline', [switch]$Issue15Poc)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -62,7 +62,10 @@ try {
     $env:SAAS_M7_LOAD_CONFIG = Join-Path $root 'tests/Load/m7-baseline.json'
     $env:SAAS_M7_MODE = $Mode
     $rawLog = Join-Path $root 'artifacts/test-results/m7/test.raw.log'
-    & dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter 'Category=SqlM7' --logger trx --results-directory artifacts/test-results/m7 *> $rawLog
+    # The POC shares the ONE M7 fixture (and original seven-case inventory)
+    # so a second fixture cannot race against the same fixed SQL databases.
+    $filter = if ($Issue15Poc) { 'Category=SqlM7|Category=SqlIssue15' } else { 'Category=SqlM7' }
+    & dotnet test tests/Unit/SaaS.UnitTests/SaaS.UnitTests.csproj --configuration Release --no-build --filter $filter --logger trx --results-directory artifacts/test-results/m7 *> $rawLog
     $report.testExitCode = $LASTEXITCODE
     $safeLog = Protect-M6Text ([IO.File]::ReadAllText($rawLog))
     [IO.File]::WriteAllText((Join-Path $out 'test.log'), $safeLog)
@@ -71,14 +74,43 @@ try {
     if ($files.Count -ne 1) { throw 'Exactly one fresh M7 TRX is required.' }
     $trx = Read-M6Trx $files[0].FullName
     [IO.File]::WriteAllText((Join-Path $out 'tests.trx'), (Protect-M6Text ([IO.File]::ReadAllText($files[0].FullName))))
-    $report.total=$trx.total; $report.passed=$trx.passed; $report.nonPassed=$trx.nonPassed
-    $inventory = Get-M3EvidenceInventory -Results $trx.results -Required $required
+    $m7Results = if ($Issue15Poc) {
+        @($trx.results | Where-Object { $required -ccontains [string]$_.testName })
+    } else { @($trx.results) }
+    $report.total = $m7Results.Count
+    $report.passed = @($m7Results | Where-Object { $_.outcome -ceq 'Passed' }).Count
+    $report.nonPassed = $report.total - $report.passed
+    $inventory = Get-M3EvidenceInventory -Results $m7Results -Required $required
     $report.mandatoryCases=$inventory.mandatoryCases; $report.missingMandatoryCases=$inventory.missingMandatoryCases; $report.unexpectedCases=$inventory.unexpectedCases
-    if ($report.testExitCode -ne 0 -or $trx.nonPassed -ne 0 -or -not $inventory.valid) { throw 'Every mandatory M7 case must execute exactly once and pass.' }
+    if (-not $inventory.valid -or (-not $Issue15Poc -and $report.testExitCode -ne 0)) {
+        throw 'Every mandatory M7 case must execute exactly once and pass.'
+    }
+    if ($Issue15Poc) {
+        $issue15Name = 'SaaS.UnitTests.M7SqlAcceptanceTests.Approve_uses_eight_physical_logins_with_fresh_authority_and_one_owned_orders_transaction'
+        $issue15Results = @($trx.results | Where-Object { $_.testName -ceq $issue15Name })
+        $report.issue15Poc = [ordered]@{
+            sourceSha=$report.sourceSha; category='SqlIssue15'; total=$issue15Results.Count
+            passed=@($issue15Results | Where-Object { $_.outcome -ceq 'Passed' }).Count
+            nonPassed=@($issue15Results | Where-Object { $_.outcome -cne 'Passed' }).Count
+            exitCode=$report.testExitCode
+        }
+        if ($issue15Results.Count -ne 1 -or $trx.results.Count -ne ($required.Count + 1)) {
+            throw 'Issue15 supplemental test inventory must be exactly one additional case.'
+        }
+        # Retain the exact combined TRX; original seven test names and their
+        # outcomes remain independently checkable in sql.json above.
+        [IO.File]::WriteAllText((Join-Path $out 'issue15-test.log'), $safeLog)
+        [IO.File]::WriteAllText((Join-Path $out 'issue15-tests.trx'),
+            (Protect-M6Text ([IO.File]::ReadAllText($files[0].FullName))))
+    }
     foreach ($file in @('matrix.json','product-runtime.json','load.json','load-samples.json')) {
         if (-not (Test-Path (Join-Path $out $file))) { throw "Missing mandatory M7 report: $file" }
         $value = Get-Content (Join-Path $out $file) -Raw | ConvertFrom-Json
         if ($value.sourceSha -cne $report.sourceSha) { throw 'M7 source evidence mismatch.' }
+    }
+
+    if ($Issue15Poc -and ($report.issue15Poc.passed -ne 1 -or $report.testExitCode -ne 0)) {
+        throw 'Issue15 Approve physical-open gate failed; mandatory M7 outcomes remain recorded separately.'
     }
     $code=0
 } catch {

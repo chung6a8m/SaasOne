@@ -13,6 +13,7 @@ namespace SaaS.UnitTests;
 public sealed partial class M7SqlAcceptanceTests
 {
     [Fact]
+    [Trait("Category", "SqlM7")]
     public async Task Hundred_virtual_users_report_nonempty_read_write_approval_baseline()
     {
         await fixture.DemandMatrixAsync(Ct);

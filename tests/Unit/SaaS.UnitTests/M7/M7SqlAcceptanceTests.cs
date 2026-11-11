@@ -12,12 +12,12 @@ using Xunit;
 namespace SaaS.UnitTests;
 
 [Collection("M7 SQL")]
-[Trait("Category", "SqlM7")]
 public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassFixture<M7SqlFixture>
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
+    [Trait("Category", "SqlM7")]
     public async Task Four_active_tenants_isolate_same_number_data_and_all_cross_token_routes()
     {
         await fixture.DemandMatrixAsync(Ct);
@@ -84,6 +84,7 @@ public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassF
     }
 
     [Fact]
+    [Trait("Category", "SqlM7")]
     public async Task Shared_user_roles_deny_and_missing_memberships_remain_tenant_specific()
     {
         var alphaCreator = (await fixture.GrantAsync(fixture.Creators["alpha"][0], "alpha")).AccessToken;
@@ -115,6 +116,7 @@ public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassF
     }
 
     [Fact]
+    [Trait("Category", "SqlM7")]
     public async Task Native_UI_two_tabs_keep_prefix_data_and_policy_consistent_with_API()
     {
         var alpha = (await fixture.GrantAsync(fixture.Shared, "alpha")).AccessToken;
@@ -142,6 +144,7 @@ public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassF
     }
 
     [Fact]
+    [Trait("Category", "SqlM7")]
     public async Task Concurrent_updates_and_approvals_have_one_winner_and_replay_one_audit()
     {
         foreach (var slug in new[] { "alpha", "beta", "gamma", "delta" })
@@ -186,6 +189,7 @@ public sealed partial class M7SqlAcceptanceTests(M7SqlFixture fixture) : IClassF
     }
 
     [Fact]
+    [Trait("Category", "SqlM7")]
     public async Task Delta_lifecycle_is_separate_and_does_not_revoke_other_tenants()
     {
         var delta = fixture.Tenant("delta");

@@ -16,7 +16,6 @@ using SaaS.Orders;
 using SaaS.Tenancy.Data;
 using SaaS.Web.Access;
 using SaaS.Web.Orchard;
-using SaaS.Web.Release;
 using Xunit;
 namespace SaaS.UnitTests;
 
@@ -94,7 +93,8 @@ public sealed class M7SqlFixture : IAsyncLifetime
             builder.Services.AddOrchardCore().ConfigureServices(services => services.Configure<OpenIdConnectOptions>(IdentityNames.Oidc,
                 options => options.BackchannelHttpHandler = Handler(false)));
             _app = builder.Build();
-            _app.Use(PlatformReleaseRuntimeGate.EnterAsync);
+            // Production Identity host now checks the release fence on its
+            // owned Platform routing login; use that exact middleware graph.
             IdentityRuntimeHost.Use(_app);
             _app.Run(context => { context.Response.StatusCode = 404; return Task.CompletedTask; });
             await _app.StartAsync();

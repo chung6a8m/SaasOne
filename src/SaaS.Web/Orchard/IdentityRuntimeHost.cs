@@ -28,6 +28,10 @@ public static class IdentityRuntimeHost
 
     public static void Use(WebApplication application)
     {
+        // The Identity boundary checks the offline platform release fence on
+        // its own new unpooled routing login before dispatching to Orchard.
+        // Do not add the standalone PlatformReleaseRuntimeGate around this
+        // middleware: it would repeat the same check using a second login.
         application.Use(IdentityRuntimeBoundary.EnterAsync);
         application.UseOrchardCore();
     }
@@ -175,6 +179,11 @@ internal static class IdentityRuntimeBoundary
         var path = context.Request.Path.Value ?? "/";
         var platformConnection = connections.Platform("runtime");
         await using var platformSql = await SqlOperations.OpenAsync(platformConnection, ct);
+        // One fresh login owns both the existing platform release fence and
+        // all the existing routing reads. A release-bound database remains
+        // closed before tenant selection, native issuance or business dispatch.
+        // This connection is disposed by SelectAsync before Orchard/next.
+        await PlatformReleaseBarrier.DemandClearAsync(platformSql, ct);
         await using var platform = TenancyConnections.PlatformContext(platformSql);
         var bootstrap = await platform.Bootstrap.AsNoTracking().SingleAsync(ct);
         if (!bootstrap.Completed || bootstrap.BaselineVersion != 1 || bootstrap.InstallationId == Guid.Empty)

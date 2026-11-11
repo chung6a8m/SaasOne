@@ -21,7 +21,10 @@ else if (TenancyConnections.RuntimeConfigured)
     NativeServices.Add(builder.Services, new RegistryShellSettings(new TenancyConnections()), runtimeRoutes: true);
 else builder.Services.AddOrchardCore();
 var app = builder.Build();
-if (TenancyConnections.RuntimeConfigured) app.Use(SaaS.Web.Release.PlatformReleaseRuntimeGate.EnterAsync);
+// IdentityRuntimeBoundary includes the same release fence inside its fresh
+// platform routing connection. Non-Identity hosts keep the standalone gate.
+if (TenancyConnections.RuntimeConfigured && !identityEnabled)
+    app.Use(SaaS.Web.Release.PlatformReleaseRuntimeGate.EnterAsync);
 if (identityEnabled) IdentityRuntimeHost.Use(app);
 else
 {

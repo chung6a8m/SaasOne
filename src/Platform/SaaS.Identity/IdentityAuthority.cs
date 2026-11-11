@@ -128,20 +128,20 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         return new(result.Family, result.Current ?? throw new InvalidOperationException("Current tenant source unavailable."));
     }
 
-    private async Task<(IdentityFamily Family, FreshTenantAuthority? Current)> ValidateCoreAsync(
+    private Task<(IdentityFamily Family, FreshTenantAuthority? Current)> ValidateCoreAsync(
         Guid familyId, Guid routedTenantId, bool web, ClaimsPrincipal? bearerPrincipal,
         string? tokenId, bool includeCurrentTenant, CancellationToken ct)
-    {
-        using var stage = SaaSStageActivity.Start(SaaSStage.IdentityFresh);
-        await using var db = Open();
-        // Keep one physical login for this validation only, not an authority snapshot.
-        // Every query below still executes; disposing this owned context closes it.
-        await db.Database.OpenConnectionAsync(ct);
-        // One fresh platform SQL SELECT for all seven keyed source entities.
+        => issuerStore.WithFreshPlatformConnectionAsync(async (nativeProvider, sql) =>
+        {
+            // Native YesSQL owns this newly opened, unpooled connection; EF
+            // borrows it only for this complete validation. Both are disposed
+            // before the next fresh validation (including a post-lock check).
+            await using var db = TenancyConnections.PlatformContext(sql);
+            // One fresh platform SQL SELECT for all seven keyed source entities.
         // LEFT JOINs let the existing fail-closed checks distinguish a missing
         // family/membership from missing mandatory related source data. Every
         // table still participates; no principal/claim ever selects a source.
-        var authoritative = await (
+        var authoritative = await FreshReadAsync(() => (
             from f in db.IdentityFamilies.AsNoTracking()
             where f.Id == familyId
             join s in db.IdentitySessions.AsNoTracking() on f.SessionId equals s.Id into sessions
@@ -162,7 +162,7 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
                 Family = f, Session = sessionRow, Account = accountRow,
                 Tenant = tenantRow, Member = memberRow, Security = securityRow, Client = clientRow
             }
-        ).SingleOrDefaultAsync(ct);
+        ).SingleOrDefaultAsync(ct));
         var family = authoritative?.Family;
         if (family is null || family.TenantId != routedTenantId || family.Issuer != deployment.Issuer.AbsoluteUri
             || family.RevokedAt is not null || family.SubscriptionExpiresAt <= Now || family.RefreshAbsoluteExpiresAt <= Now)
@@ -186,23 +186,37 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         deployment.ValidateClient(client);
         if (web && (session.IdleExpiresAt <= Now || session.AbsoluteExpiresAt <= Now))
             throw new IdentityDeniedException(401, "session_expired");
+        // A disabled login can remain authenticated on this borrowed session.
+        // Check the current server principal AFTER the platform SELECT and
+        // immediately BEFORE native account/grant/token authorization. The
+        // native-scope exit repeats this check after the final tenant SELECT.
+        await DefaultIssuerStore.DemandEnabledRuntimeLoginAsync(sql, ct);
         if (bearerPrincipal is null)
-            await issuerStore.ValidateAccountAndAuthorizationAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);
+            await DefaultIssuerStore.ValidateAccountAndAuthorizationInScopeAsync(nativeProvider,
+                session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);
         else
-            await issuerStore.ValidateBearerAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId,
-                tokenId ?? "", () => IdentityProtocol.DemandClaims(bearerPrincipal, family), ct);
-        if (web) await TouchAsync(db, session, ct);
+            await issuerStore.ValidateBearerInScopeAsync(nativeProvider, session.Subject, session.NativeSecurityStamp,
+                family.AuthorizationId, tokenId ?? "", () => IdentityProtocol.DemandClaims(bearerPrincipal, family), ct);
+        if (web) await FreshReadAsync(() => TouchAsync(db, session, ct));
         FreshTenantAuthority? current = null;
         if (includeCurrentTenant)
         {
             // A SECOND real tenant SELECT, intentionally after the native checks.
             // The earlier identity tenant query never becomes a cached plan/Allow.
             // AsNoTracking prevents reusing an EF identity-map tenant.
-            var latest = await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == routedTenantId, ct);
+            var latest = await FreshReadAsync(() => db.Tenants.AsNoTracking().SingleAsync(x => x.Id == routedTenantId, ct));
             current = new(latest.Plan, latest.RegistryVersion, latest.AuthorizationGeneration,
                 latest.RetiredAt, latest.Status());
         }
         return (family, current);
+        }, ct);
+    
+    // Observe Platform SQL separately from the surrounding native scope.
+    // The native scope still owns the one physical login for each validation.
+    private static async Task<T> FreshReadAsync<T>(Func<Task<T>> read)
+    {
+        using var stage = SaaSStageActivity.Start(SaaSStage.IdentityFresh);
+        return await read();
     }
 
     public static Guid RequiredId(ClaimsPrincipal principal, string name) =>
