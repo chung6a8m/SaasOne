@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using SaaS.Abstractions.Tenancy;
 using SaaS.Tenancy.Data;
@@ -21,6 +22,13 @@ public static class TenantDatabaseVerifier
     public static async Task VerifyIdentityAsync(TenantRegistration registration, string connection, CancellationToken cancellationToken)
     {
         ValidateRegistration(registration);
+        await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+        await VerifyIdentityAsync(registration, sql, cancellationToken);
+    }
+
+    public static async Task VerifyIdentityAsync(TenantRegistration registration, SqlConnection connection, CancellationToken cancellationToken)
+    {
+        ValidateRegistration(registration);
         await using var database = TenancyConnections.CustomerContext(connection);
         var records = await database.Identity.AsNoTracking().Take(2).ToArrayAsync(cancellationToken);
         TenantIdentity.Verify(registration.Id, records.FirstOrDefault()?.TenantId, records.Length);
@@ -30,7 +38,37 @@ public static class TenantDatabaseVerifier
 
     public static async Task VerifyAsync(TenantRegistration registration, string connection, OrchardBaseline orchard, CancellationToken cancellationToken)
     {
+        ValidateRegistration(registration);
+        await using var sql = await SqlOperations.OpenAsync(connection, cancellationToken);
+        await VerifyAsync(registration, sql, orchard, cancellationToken);
+    }
+
+    /// <summary>
+    /// Fresh routing proof: validate the customer database identity BEFORE
+    /// reading any native Orchard metadata, then demand the original complete
+    /// runtime principal, EF schema and tenant baseline checks on the SAME
+    /// caller-owned unpooled connection. Never cache the result.
+    /// </summary>
+    public static async Task ReadAndVerifyAsync(TenantRegistration registration, SqlConnection connection,
+        Func<SqlConnection, CancellationToken, Task<OrchardBaseline>> readSnapshot, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(readSnapshot);
         await VerifyIdentityAsync(registration, connection, cancellationToken);
+        var orchard = await readSnapshot(connection, cancellationToken);
+        await VerifyAfterIdentityAsync(registration, connection, orchard, cancellationToken);
+    }
+
+    public static async Task VerifyAsync(TenantRegistration registration, SqlConnection connection, OrchardBaseline orchard, CancellationToken cancellationToken)
+    {
+        // Existing public callers still verify the actual one-row source first,
+        // with the same error ordering, even if the caller supplied a snapshot.
+        await VerifyIdentityAsync(registration, connection, cancellationToken);
+        await VerifyAfterIdentityAsync(registration, connection, orchard, cancellationToken);
+    }
+
+    private static async Task VerifyAfterIdentityAsync(TenantRegistration registration, SqlConnection connection,
+        OrchardBaseline orchard, CancellationToken cancellationToken)
+    {
         await SqlOperations.RequireRuntimeAsync(connection, cancellationToken);
         await using var database = TenancyConnections.CustomerContext(connection);
         await TenancyConnections.VerifySchemaAsync(database, cancellationToken);

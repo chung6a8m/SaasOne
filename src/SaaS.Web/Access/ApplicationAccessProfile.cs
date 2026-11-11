@@ -41,17 +41,76 @@ public static class ApplicationAccessProfile
     private static string Digest(string input) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)));
     public static TenantDbContext Open(DbConnection connection) => new(new DbContextOptionsBuilder<TenantDbContext>()
         .UseSqlServer(connection, sql => sql.MigrationsHistoryTable("__EFMigrationsHistory", "tenancy")).Options);
-    public static async Task VerifyAsync(Guid tenantId, string plan, DbConnection connection, CancellationToken ct)
+    public static Task VerifyAsync(Guid tenantId, string plan, DbConnection connection, CancellationToken ct)
+        => VerifyAsync(tenantId, plan, connection, null, ct);
+
+    /// <summary>Every SQL read is fresh and enlisted in the caller's transaction
+    /// when supplied. The caller owns the connection, transaction and commit.</summary>
+    public static async Task VerifyAsync(Guid tenantId, string plan, DbConnection connection,
+        DbTransaction? transaction, CancellationToken ct)
     {
+        if (transaction is not null && !ReferenceEquals(transaction.Connection, connection))
+            throw new TenantContractException("transaction_mismatch");
         await using var tenancy = Open(connection); await using var access = AccessDbContext.Open(connection);
         await using var audit = AuditDbContext.Open(connection); await using var orders = OrdersDbContext.Open(connection);
         await using var approvals = ApprovalsDbContext.Open(connection);
-        foreach (var db in new DbContext[] { tenancy, access, audit, orders, approvals }) await TenancyConnections.VerifySchemaAsync(db, ct);
-        await ApprovalHistoryVerifier.DemandColumnsAsync(connection, null, ct);
+        if (transaction is not null) await tenancy.Database.UseTransactionAsync(transaction, ct);
+        // One fresh command reads every owner history; each owner's complete sequence
+        // still has to match the migrations in its own EF assembly exactly.
+        await VerifyModuleHistoriesAsync(connection, transaction,
+            [("tenancy", tenancy), ("access", access), ("audit", audit), ("orders", orders), ("approvals", approvals)], ct);
+        await ApprovalHistoryVerifier.DemandColumnsAsync(connection, transaction, ct);
         var profile = await tenancy.ApplicationProfile.AsNoTracking().SingleAsync(ct);
         if (profile.Id != 1 || profile.TenantId != tenantId || profile.Version != 3 || profile.Plan != plan || profile.ManifestHash != Hash(plan))
             throw new TenantContractException("application_profile_mismatch");
     }
+    /// <summary>
+    /// Fresh, read-only check of all five independent EF migration histories.
+    /// The caller owns the already-open connection/transaction; this method
+    /// never closes, commits or rolls them back and never caches accepted history.
+    /// </summary>
+    private static async Task VerifyModuleHistoriesAsync(DbConnection connection, DbTransaction? transaction,
+        (string Owner, DbContext Context)[] modules, CancellationToken ct)
+    {
+        // Expected identifiers remain EF's authoritative migration assembly metadata.
+        // The literal SQL below names only the five existing owned history tables.
+        var expected = modules.ToDictionary(x => x.Owner,
+            x => x.Context.Database.GetMigrations().Order(StringComparer.Ordinal).ToArray(),
+            StringComparer.Ordinal);
+        if (expected.Any(x => x.Value.Length == 0))
+            throw new TenantContractException("database_schema_mismatch");
+        var applied = modules.ToDictionary(x => x.Owner, _ => new List<string>(), StringComparer.Ordinal);
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT N'tenancy' AS [Owner], [MigrationId] FROM [tenancy].[__EFMigrationsHistory]
+            UNION ALL SELECT N'access', [MigrationId] FROM [access].[__EFMigrationsHistory]
+            UNION ALL SELECT N'audit', [MigrationId] FROM [audit].[__EFMigrationsHistory]
+            UNION ALL SELECT N'orders', [MigrationId] FROM [orders].[__EFMigrationsHistory]
+            UNION ALL SELECT N'approvals', [MigrationId] FROM [approvals].[__EFMigrationsHistory];
+            """;
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var owner = reader.GetString(0);
+                if (!applied.TryGetValue(owner, out var entries))
+                    throw new TenantContractException("database_schema_mismatch");
+                entries.Add(reader.GetString(1));
+            }
+        }
+        catch (SqlException error) when (error.Number is 207 or 208)
+        {
+            // Missing owner table or MigrationId is schema drift, never an empty success.
+            throw new TenantContractException("database_schema_mismatch");
+        }
+        foreach (var item in expected)
+            if (!item.Value.SequenceEqual(applied[item.Key].Order(StringComparer.Ordinal), StringComparer.Ordinal))
+                throw new TenantContractException("database_schema_mismatch");
+    }
+
     public static async Task DemandMembershipsAsync(TenancyConnections connections, string role, Guid tenantId,
         IReadOnlyCollection<Guid> users, CancellationToken ct)
     {

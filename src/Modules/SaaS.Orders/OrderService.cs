@@ -24,8 +24,10 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             var initial = await AccessAsync(tx, token);
             var partition = OrderPolicy.Partition(tenantId, initial.Current.UserId, initial.ClientId, request.Action, request.Key);
             await LockAsync(tx, "orders-command:" + partition, true, token);
-            var access = await AccessAsync(tx, token);
-            SameIdentity(initial, access);
+            // Both execution paths immediately revalidate current authority after
+            // acquiring their resource lock. Never use an earlier Allow for any
+            // replay disclosure, policy decision or new business write.
+            OrderAccessContext access;
             await using var db = OrdersDbContext.Open(tx.Connection);
             await db.Database.UseTransactionAsync(tx.Transaction, token);
             await TenancyConnections.VerifySchemaAsync(db, token);
@@ -100,7 +102,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             await db.SaveChangesAsync(token);
             return new OrderCommandResult(after, false, expires);
         }, ct);
-    }, ct);
+    }, ct, SaaSStage.OrdersWrite);
 
     public Task<OrderView> GetAsync(Guid id, CancellationToken ct) => ReadAsync(id, includeDecisions: false, ct);
     public Task<OrderView> GetDetailAsync(Guid id, CancellationToken ct) => ReadAsync(id, includeDecisions: true, ct);
@@ -132,7 +134,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
             OrderPermissions.RequireRead(catalog, refreshed, value);
         }
         return value;
-    }, ct), ct);
+    }, ct), ct, SaaSStage.OrdersRead);
 
     public Task<OrderPage> ListAsync(int page, CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
     {
@@ -156,7 +158,8 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         var actor = access.Current.UserId;
         var ids = await db.Orders.AsNoTracking().Where(x => own && x.CreatedBy == actor || others && x.CreatedBy != actor)
             .OrderByDescending(x => x.CreatedAt).ThenBy(x => x.Id).Skip(page * 50).Take(51).Select(x => x.Id).ToArrayAsync(token);
-        foreach (var id in ids.Order()) await LockAsync(tx, ResourceLock(id), false, token);
+        await SqlTransactionLocks.AcquireOrderedSharedAsync((SqlConnection)tx.Connection, (SqlTransaction)tx.Transaction,
+            ids.Order().Select(ResourceLock).ToArray(), 30000, token);
         var refreshed = await AccessAsync(tx, token); SameIdentity(access, refreshed);
         // Resource locks and the refreshed current authority precede all batch reads.
         // Never run these reads concurrently on the enlisted transaction connection.
@@ -165,7 +168,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         access = refreshed;
         if (!CanRead(true) && !CanRead(false)) throw new AccessDeniedException(403, "permission_denied");
         return new OrderPage(items.Take(50).ToArray(), items.Count > 50);
-    }, ct), ct);
+    }, ct), ct, SaaSStage.OrdersRead);
 
     /// <summary>A current resource-aware UI hint; commands always authorize again inside their own transaction.</summary>
     public Task<bool> CanDecideAsync(Guid id, CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
@@ -181,7 +184,7 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         if (current.Status != OrderStatus.PendingApproval || approvalHandler is null) return false;
         try { OrderPermissions.Require(catalog, access, OrderAction.Approve, current); return true; }
         catch (AccessDeniedException error) when (error.StatusCode == 403 && error.Code is "permission_denied" or "self_approval_forbidden") { return false; }
-    }, ct), ct);
+    }, ct), ct, SaaSStage.OrdersRead);
 
     public Task DemandCreateAsync(CancellationToken ct) => BoundaryAsync(() => InTransactionAsync(async (tx, token) =>
     {
@@ -189,20 +192,19 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         return true;
     }, ct), ct);
 
-    private async Task<T> InTransactionAsync<T>(Func<TenantTransaction, CancellationToken, Task<T>> work, CancellationToken ct)
-    {
-        long version;
-        await using (var sql = await SqlOperations.OpenAsync(connection, ct))
+    private Task<T> InTransactionAsync<T>(Func<TenantTransaction, CancellationToken, Task<T>> work, CancellationToken ct)
+        => new TenantTransactionCoordinator(connection).ExecuteWithPreflightAsync(tenantId, async (sql, token) =>
         {
-            var gate = await TenantWriteGate.ReadAsync(sql, null, ct);
+            // Fresh preflight read on the same owned login. The coordinator must still
+            // recheck this version AFTER acquiring its transaction-owned write-gate lock.
+            var gate = await TenantWriteGate.ReadAsync(sql, null, token);
             if (gate.TenantId != tenantId || tenantId == Guid.Empty) throw new AccessDeniedException(403, "tenant_mismatch");
             if (!gate.IsOpen) throw new AccessDeniedException(503, "tenant_operation_in_progress");
-            version = gate.Version;
-        }
-        return await new TenantTransactionCoordinator(connection).ExecuteAsync(tenantId, version, work, ct);
-    }
+            return gate.Version;
+        }, work, ct);
     private async Task<OrderAccessContext> AccessAsync(TenantTransaction tx, CancellationToken ct)
     {
+        using var stage = SaaSStageActivity.Start(SaaSStage.AclAuthorize);
         var access = await currentAccess(tx, ct);
         if (access.Current.TenantId != tenantId || access.Snapshot.TenantId != tenantId) throw new AccessDeniedException(403, "tenant_mismatch");
         if (access.Current.UserId == Guid.Empty || string.IsNullOrWhiteSpace(access.ClientId)) throw new AccessDeniedException(401, "credential_invalid");
@@ -265,18 +267,37 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
 
     private static async Task<OrderRow> LoadAsync(OrdersDbContext db, Guid id, CancellationToken ct)
     {
-        var row = await db.Orders.SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw new AccessDeniedException(404, "order_not_found");
+        // One server-side SQL SELECT under the existing transaction-owned
+        // resource lock. Keep the OrderRow tracked for rowversion concurrency
+        // and include ALL current and historical revision integrity facts.
+        // This is not a cached authority/history snapshot across operations.
+        var loaded = await db.Orders.Where(x => x.Id == id).Select(row => new
+        {
+            Row = row,
+            // Do not apply AsNoTracking inside this projection. EF may apply
+            // no-tracking to the WHOLE query, detaching Row and silently skipping
+            // the optimistic-concurrency UPDATE on Submit/Edit/Approve.
+            // The revision is only read; the DbContext is request/transaction local.
+            Latest = db.Revisions
+                .Where(revision => revision.OrderId == row.Id && revision.Revision == row.Revision)
+                .SingleOrDefault(),
+            HistoryCount = db.Revisions.LongCount(revision => revision.OrderId == row.Id),
+            HistoricalApproval = db.Revisions.Any(revision =>
+                revision.OrderId == row.Id && revision.ApprovalRequired)
+        }).SingleOrDefaultAsync(ct);
+        var row = loaded?.Row ?? throw new AccessDeniedException(404, "order_not_found");
         var current = row.View(); OrderPolicy.DemandIntegrity(current);
-        var latest = await db.Revisions.AsNoTracking().SingleOrDefaultAsync(x => x.OrderId == id && x.Revision == row.Revision, ct);
+        var latest = loaded!.Latest;
         if (latest is null || latest.Status != row.Status || latest.ApprovalRequired != row.ApprovalRequired
             || JsonSerializer.Deserialize<OrderView>(latest.SnapshotJson) != current
-            || await db.Revisions.LongCountAsync(x => x.OrderId == id, ct) != row.Revision
-            || !row.ApprovalRequired && await db.Revisions.AnyAsync(x => x.OrderId == id && x.ApprovalRequired, ct))
+            || loaded.HistoryCount != row.Revision
+            || !row.ApprovalRequired && loaded.HistoricalApproval)
             throw new AccessDeniedException(503, "order_history_invalid");
         return row;
     }
-    private static async Task<T> BoundaryAsync<T>(Func<Task<T>> action, CancellationToken ct)
+    private static async Task<T> BoundaryAsync<T>(Func<Task<T>> action, CancellationToken ct, SaaSStage? stage = null)
     {
+        using var activity = stage is { } value ? SaaSStageActivity.Start(value) : null;
         try { return await action(); }
         catch (AccessDeniedException) { throw; }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

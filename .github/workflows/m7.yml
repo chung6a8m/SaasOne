@@ -1,0 +1,87 @@
+name: M7 four-tenant target rehearsal and product reuse
+on:
+  push:
+    branches: [main, codex/m7-acceptance-reuse]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Baseline observes; Candidate evaluates proposals; Acceptance requires approval and inherited Full
+        type: choice
+        required: true
+        default: Candidate
+        options: [Baseline, Candidate, Acceptance]
+permissions:
+  contents: read
+concurrency:
+  group: m7-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  policy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Evidence and target policy regressions
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/test-m7-evidence.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File scripts/test-m7-target-readiness.ps1
+          exit $LASTEXITCODE
+  verification:
+    needs: policy
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/pinned-toolchain
+      - name: Exact-source verification with explicit acceptance boundary
+        env:
+          M7_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'Candidate' }}
+        shell: pwsh
+        run: |
+          $arguments=@{Mode=$env:M7_MODE}
+          if ($env:M7_MODE -ne 'Baseline') { $arguments.Targets='tests/Load/m7-targets.json' }
+          ./scripts/check-m7.ps1 @arguments
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: m7-${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'Candidate' }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/m7-runs/*.zip
+            artifacts/m7-runs/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+  source:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/m7-acceptance-reuse'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          mkdir -p artifacts/m7-source
+          git rev-parse HEAD > artifacts/m7-source/source-sha.txt
+          git archive --format=zip --output=artifacts/m7-source/source.zip HEAD
+          cd artifacts/m7-source
+          sha256sum source.zip > source.zip.sha256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: m7-source-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/m7-source/
+          if-no-files-found: error
+          retention-days: 7

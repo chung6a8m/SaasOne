@@ -1,0 +1,470 @@
+{
+  "schemaVersion": 1,
+  "sourceSha": "443e9ac2f0a51022de550437957f94a1e7dc6c23",
+  "mode": "Baseline",
+  "status": "PASS",
+  "acceptance": "NOT_ASSESSED",
+  "config": {
+    "schemaVersion": 1,
+    "virtualUsersPerTenant": 25,
+    "rampSeconds": 30,
+    "measureSeconds": 120,
+    "thinkMilliseconds": 250,
+    "requestTimeoutSeconds": 120
+  },
+  "startedUtc": "2026-11-08T15:50:16.3370475+00:00",
+  "completedUtc": "2026-11-08T15:53:46.3764515+00:00",
+  "elapsedIncludingDrainSeconds": 209.8427822,
+  "transport": "Kestrel HTTPS; native Orchard/OpenIddict; real SQL Server",
+  "topology": "Load generator and application share one process; SQL Server is a separate local container. Not a production capacity claim.",
+  "observationDeadline": "A bounded client measurement deadline, not a latency SLO. Earlier failed 30-second experiments remain failures; targets require separate owner review.",
+  "latencyCohort": "Requests started in the measured window, including their drain time; nearest-rank percentiles.",
+  "throughputCohort": "Successful requests completed inside the measured window, divided by window seconds.",
+  "accounts": {
+    "creatorAccounts": 20,
+    "reviewerAccounts": 2,
+    "creatorGrants": 100,
+    "reviewerGrants": 4
+  },
+  "configuredVirtualUsers": 100,
+  "peakVirtualUsers": 100,
+  "peakConcurrentRequests": 100,
+  "completedTransactions": [
+    {
+      "tenant": "alpha",
+      "total": 36,
+      "measuredCompletionsPerSecond": 0.09166666666666666
+    },
+    {
+      "tenant": "beta",
+      "total": 29,
+      "measuredCompletionsPerSecond": 0.03333333333333333
+    },
+    {
+      "tenant": "gamma",
+      "total": 27,
+      "measuredCompletionsPerSecond": 0.016666666666666666
+    },
+    {
+      "tenant": "delta",
+      "total": 36,
+      "measuredCompletionsPerSecond": 0.09166666666666666
+    }
+  ],
+  "environment": {
+    "os": "Ubuntu 22.04.5 LTS",
+    "architecture": "X64",
+    "runtime": ".NET 10.0.14",
+    "logicalProcessors": 4,
+    "gcAvailableMemoryBytes": 16765386752,
+    "peakWorkingSetBytes": 412405760,
+    "processCpuSeconds": 265.241488,
+    "processCpuPercentOfAvailableCores": 31.600025173512975,
+    "gcCollections": [
+      754,
+      203,
+      27
+    ]
+  },
+  "missingCells": [],
+  "unexpectedFailures": [],
+  "integrityErrors": [],
+  "rows": [
+    {
+      "tenant": "alpha",
+      "operation": "create",
+      "totalRequests": 36,
+      "measuredRequests": 12,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.16666666666666666,
+      "latency": {
+        "count": 12,
+        "p50Ms": 30664.7849,
+        "p95Ms": 38524.9162,
+        "p99Ms": 38524.9162,
+        "maxMs": 38524.9162
+      }
+    },
+    {
+      "tenant": "alpha",
+      "operation": "edit",
+      "totalRequests": 36,
+      "measuredRequests": 20,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.19166666666666668,
+      "latency": {
+        "count": 20,
+        "p50Ms": 32610.0473,
+        "p95Ms": 40552.8264,
+        "p99Ms": 40851.1237,
+        "maxMs": 40851.1237
+      }
+    },
+    {
+      "tenant": "alpha",
+      "operation": "submit",
+      "totalRequests": 36,
+      "measuredRequests": 23,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.2,
+      "latency": {
+        "count": 23,
+        "p50Ms": 31527.3617,
+        "p95Ms": 38692.3249,
+        "p99Ms": 39804.4716,
+        "maxMs": 39804.4716
+      }
+    },
+    {
+      "tenant": "alpha",
+      "operation": "detail",
+      "totalRequests": 36,
+      "measuredRequests": 24,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.19166666666666668,
+      "latency": {
+        "count": 24,
+        "p50Ms": 21674.6161,
+        "p95Ms": 24860.551,
+        "p99Ms": 25130.96,
+        "maxMs": 25130.96
+      }
+    },
+    {
+      "tenant": "alpha",
+      "operation": "list",
+      "totalRequests": 36,
+      "measuredRequests": 23,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.09166666666666666,
+      "latency": {
+        "count": 23,
+        "p50Ms": 26646.0202,
+        "p95Ms": 37612.0108,
+        "p99Ms": 40505.8078,
+        "maxMs": 40505.8078
+      }
+    },
+    {
+      "tenant": "beta",
+      "operation": "create",
+      "totalRequests": 29,
+      "measuredRequests": 5,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.15,
+      "latency": {
+        "count": 5,
+        "p50Ms": 27639.5653,
+        "p95Ms": 31879.0249,
+        "p99Ms": 31879.0249,
+        "maxMs": 31879.0249
+      }
+    },
+    {
+      "tenant": "beta",
+      "operation": "edit",
+      "totalRequests": 29,
+      "measuredRequests": 18,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.18333333333333332,
+      "latency": {
+        "count": 18,
+        "p50Ms": 32007.1299,
+        "p95Ms": 36226.6097,
+        "p99Ms": 36226.6097,
+        "maxMs": 36226.6097
+      }
+    },
+    {
+      "tenant": "beta",
+      "operation": "submit",
+      "totalRequests": 29,
+      "measuredRequests": 22,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.2,
+      "latency": {
+        "count": 22,
+        "p50Ms": 32189.9869,
+        "p95Ms": 38260.6727,
+        "p99Ms": 38901.6789,
+        "maxMs": 38901.6789
+      }
+    },
+    {
+      "tenant": "beta",
+      "operation": "approve",
+      "totalRequests": 29,
+      "measuredRequests": 24,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.14166666666666666,
+      "latency": {
+        "count": 24,
+        "p50Ms": 31514.7911,
+        "p95Ms": 39330.3672,
+        "p99Ms": 40394.7484,
+        "maxMs": 40394.7484
+      }
+    },
+    {
+      "tenant": "beta",
+      "operation": "detail",
+      "totalRequests": 29,
+      "measuredRequests": 17,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.06666666666666667,
+      "latency": {
+        "count": 17,
+        "p50Ms": 25452.7021,
+        "p95Ms": 30138.4506,
+        "p99Ms": 30138.4506,
+        "maxMs": 30138.4506
+      }
+    },
+    {
+      "tenant": "beta",
+      "operation": "list",
+      "totalRequests": 29,
+      "measuredRequests": 8,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.03333333333333333,
+      "latency": {
+        "count": 8,
+        "p50Ms": 27062.0358,
+        "p95Ms": 44793.1396,
+        "p99Ms": 44793.1396,
+        "maxMs": 44793.1396
+      }
+    },
+    {
+      "tenant": "gamma",
+      "operation": "create",
+      "totalRequests": 27,
+      "measuredRequests": 3,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.15,
+      "latency": {
+        "count": 3,
+        "p50Ms": 30841.5025,
+        "p95Ms": 34112.3808,
+        "p99Ms": 34112.3808,
+        "maxMs": 34112.3808
+      }
+    },
+    {
+      "tenant": "gamma",
+      "operation": "edit",
+      "totalRequests": 27,
+      "measuredRequests": 18,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.18333333333333332,
+      "latency": {
+        "count": 18,
+        "p50Ms": 32303.0521,
+        "p95Ms": 41052.8798,
+        "p99Ms": 41052.8798,
+        "maxMs": 41052.8798
+      }
+    },
+    {
+      "tenant": "gamma",
+      "operation": "submit",
+      "totalRequests": 27,
+      "measuredRequests": 22,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.2,
+      "latency": {
+        "count": 22,
+        "p50Ms": 32460.4174,
+        "p95Ms": 39521.0351,
+        "p99Ms": 53989.1441,
+        "maxMs": 53989.1441
+      }
+    },
+    {
+      "tenant": "gamma",
+      "operation": "approve",
+      "totalRequests": 27,
+      "measuredRequests": 24,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.15,
+      "latency": {
+        "count": 24,
+        "p50Ms": 31138.8612,
+        "p95Ms": 37549.6775,
+        "p99Ms": 38363.9165,
+        "maxMs": 38363.9165
+      }
+    },
+    {
+      "tenant": "gamma",
+      "operation": "detail",
+      "totalRequests": 27,
+      "measuredRequests": 18,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.06666666666666667,
+      "latency": {
+        "count": 18,
+        "p50Ms": 24979.9777,
+        "p95Ms": 28879.7646,
+        "p99Ms": 28879.7646,
+        "maxMs": 28879.7646
+      }
+    },
+    {
+      "tenant": "gamma",
+      "operation": "list",
+      "totalRequests": 27,
+      "measuredRequests": 8,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.016666666666666666,
+      "latency": {
+        "count": 8,
+        "p50Ms": 32114.8653,
+        "p95Ms": 44972.6914,
+        "p99Ms": 44972.6914,
+        "maxMs": 44972.6914
+      }
+    },
+    {
+      "tenant": "delta",
+      "operation": "create",
+      "totalRequests": 36,
+      "measuredRequests": 12,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.16666666666666666,
+      "latency": {
+        "count": 12,
+        "p50Ms": 30039.4038,
+        "p95Ms": 34871.5335,
+        "p99Ms": 34871.5335,
+        "maxMs": 34871.5335
+      }
+    },
+    {
+      "tenant": "delta",
+      "operation": "edit",
+      "totalRequests": 36,
+      "measuredRequests": 20,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.19166666666666668,
+      "latency": {
+        "count": 20,
+        "p50Ms": 33447.2504,
+        "p95Ms": 38732.5145,
+        "p99Ms": 38963.6293,
+        "maxMs": 38963.6293
+      }
+    },
+    {
+      "tenant": "delta",
+      "operation": "submit",
+      "totalRequests": 36,
+      "measuredRequests": 23,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.2,
+      "latency": {
+        "count": 23,
+        "p50Ms": 33193.4278,
+        "p95Ms": 43597.7168,
+        "p99Ms": 44410.4388,
+        "maxMs": 44410.4388
+      }
+    },
+    {
+      "tenant": "delta",
+      "operation": "detail",
+      "totalRequests": 36,
+      "measuredRequests": 24,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.175,
+      "latency": {
+        "count": 24,
+        "p50Ms": 21790.9041,
+        "p95Ms": 24529.3147,
+        "p99Ms": 25127.5623,
+        "maxMs": 25127.5623
+      }
+    },
+    {
+      "tenant": "delta",
+      "operation": "list",
+      "totalRequests": 36,
+      "measuredRequests": 21,
+      "measuredFailures": 0,
+      "allPhaseFailures": 0,
+      "unexpected5xx": 0,
+      "transportFailures": 0,
+      "successfulCompletionsPerSecond": 0.09166666666666666,
+      "latency": {
+        "count": 21,
+        "p50Ms": 29132.4913,
+        "p95Ms": 40124.0239,
+        "p99Ms": 45310.1401,
+        "maxMs": 45310.1401
+      }
+    }
+  ]
+}

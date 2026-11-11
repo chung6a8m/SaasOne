@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Diagnostics;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using SaaS.Abstractions.Tenancy;
 using SaaS.AccessControl;
@@ -70,8 +72,49 @@ public sealed class M5UpgradeSqlTests(M1SqlFixture fixture)
         var request = Assert.Single(await db.Requests.ToArrayAsync(Ct));
         Assert.Equal(next.Id, request.OrderId); Assert.Equal(next.Version, request.SubmittedVersion);
         await using var sql = await SqlOperations.OpenAsync(Environment.CustomerAdmin(Alpha), Ct);
-        await ApplicationAccessProfile.VerifyAsync(Alpha.Id, "Approval", sql, Ct);
+        using (var commands = new SameConnectionCommandCounter(sql))
+        {
+            await ApplicationAccessProfile.VerifyAsync(Alpha.Id, "Approval", sql, Ct);
+            // One fresh five-owner history read, one required Approvals-column probe,
+            // and one current manifest lookup. Original five comparisons remain mandatory.
+            Assert.Equal(3, commands.Count);
+        }
         await ApprovalHistoryVerifier.VerifyAsync(sql, Ct);
+    }
+    // Test-only counter scoped to this SQL connection: records neither SQL text nor parameters.
+    private sealed class SameConnectionCommandCounter :
+        IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly SqlConnection _connection;
+        private readonly IDisposable _listeners;
+        private readonly List<IDisposable> _subscriptions = [];
+        private int _count;
+        internal SameConnectionCommandCounter(SqlConnection connection)
+        {
+            _connection = connection;
+            _listeners = DiagnosticListener.AllListeners.Subscribe(this);
+        }
+        internal int Count => Volatile.Read(ref _count);
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "SqlClientDiagnosticListener")
+                _subscriptions.Add(listener.Subscribe(this,
+                    name => name == "Microsoft.Data.SqlClient.WriteCommandBefore"));
+        }
+        public void OnNext(KeyValuePair<string, object?> entry)
+        {
+            if (entry.Key != "Microsoft.Data.SqlClient.WriteCommandBefore"
+                || entry.Value?.GetType().GetProperty("Command")?.GetValue(entry.Value) is not SqlCommand command
+                || !ReferenceEquals(command.Connection, _connection)) return;
+            Interlocked.Increment(ref _count);
+        }
+        public void OnError(Exception error) { }
+        public void OnCompleted() { }
+        public void Dispose()
+        {
+            _listeners.Dispose();
+            foreach (var item in _subscriptions) item.Dispose();
+        }
     }
     [Fact]
     public async Task Legacy_fixture_approval_markers_without_requests_cannot_be_upgraded_or_silently_backfilled()

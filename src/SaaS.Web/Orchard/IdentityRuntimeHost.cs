@@ -107,42 +107,11 @@ internal static class IdentityRuntimeBoundary
             var deployment = context.RequestServices.GetRequiredService<IdentityDeployment>();
             if (!context.Request.IsHttps || !string.Equals(context.Request.Host.Value, deployment.Issuer.Authority, StringComparison.OrdinalIgnoreCase))
             { context.Response.StatusCode = 400; return; }
-            var platformConnection = connections.Platform("runtime");
-            await using var platform = TenancyConnections.PlatformContext(platformConnection);
-            var bootstrap = await platform.Bootstrap.AsNoTracking().SingleAsync(ct);
-            if (!bootstrap.Completed || bootstrap.BaselineVersion != 1 || bootstrap.InstallationId == Guid.Empty)
-                throw new TenantContractException("platform_not_ready");
-            await SqlOperations.RequireRuntimeAsync(platformConnection, ct);
-            await TenancyConnections.VerifySchemaAsync(platform, ct);
-            await FoundationProfile.ReadSnapshotAsync(platformConnection, ct);
-            await IdentityInstaller.VerifyAsync(connections, deployment, ct);
-            // Check the independent platform registry BEFORE native handlers can emit
-            // an authorization code or even an OAuth error to a drifted native URI.
-            if (issuer && path is "/connect/authorize" or "/connect/logout")
-                await DemandRegisteredCallbackAsync(context, platform, deployment, path == "/connect/logout");
-            ShellSettings expected;
-            if (issuer)
-            {
-                expected = NativeServices.Settings("Default", "", bootstrap.InstallationId, platformConnection);
-                expected["TablePrefix"] = deployment.NativePrefix;
-                context.Features.Set(new RoutedTenantSelection(bootstrap.InstallationId, "Default", 0));
-            }
-            else
-            {
-                var tenant = await platform.Tenants.AsNoTracking().SingleOrDefaultAsync(x => x.Slug == slug, ct);
-                if (tenant is null) { context.Response.StatusCode = 404; return; }
-                TenantDatabaseVerifier.ValidateRegistration(tenant);
-                var selected = connections.Customer(tenant.Id, "runtime");
-                await TenantDatabaseVerifier.VerifyIdentityAsync(tenant, selected, ct);
-                var native = await FoundationProfile.ReadSnapshotAsync(selected, ct);
-                await TenantDatabaseVerifier.VerifyAsync(tenant, selected, native, ct);
-                if (local == "/health/ready" && !TenantPolicy.IsOperational(tenant.Status(), context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()))
-                    throw new TenantContractException("tenant_not_operational");
-                // For identity endpoints the authoritative family/membership/lifecycle
-                // checks return 401/403; a disabled tenant must never fall into Default.
-                expected = NativeServices.Settings(tenant.Slug, tenant.Slug, tenant.Id, selected);
-                context.Features.Set(new RoutedTenantSelection(tenant.Id, tenant.Slug, tenant.RegistryVersion));
-            }
+            // Selection owns and disposes its transports BEFORE Orchard/downstream execution.
+            ShellSettings? expected;
+            using (SaaSStageActivity.Start(SaaSStage.Routing))
+                expected = await SelectAsync(context, connections, deployment, issuer, slug, local, ct);
+            if (expected is null) return;
             var host = context.RequestServices.GetRequiredService<IShellHost>();
             await host.InitializeAsync();
             bool Current() => host.TryGetSettings(expected.Name, out var actual)
@@ -198,6 +167,57 @@ internal static class IdentityRuntimeBoundary
             context.Response.StatusCode = 503;
             await context.Response.WriteAsJsonAsync(new { error = "identity_dependency_unavailable", correlationId = context.TraceIdentifier }, ct);
         }
+    }
+
+    private static async Task<ShellSettings?> SelectAsync(HttpContext context, TenancyConnections connections,
+        IdentityDeployment deployment, bool issuer, string? slug, string local, CancellationToken ct)
+    {
+        var path = context.Request.Path.Value ?? "/";
+        var platformConnection = connections.Platform("runtime");
+        await using var platformSql = await SqlOperations.OpenAsync(platformConnection, ct);
+        await using var platform = TenancyConnections.PlatformContext(platformSql);
+        var bootstrap = await platform.Bootstrap.AsNoTracking().SingleAsync(ct);
+        if (!bootstrap.Completed || bootstrap.BaselineVersion != 1 || bootstrap.InstallationId == Guid.Empty)
+            throw new TenantContractException("platform_not_ready");
+        await SqlOperations.RequireRuntimeAsync(platformSql, ct);
+        await TenancyConnections.VerifySchemaAsync(platform, ct);
+        await FoundationProfile.ReadSnapshotAsync(platformSql, ct);
+        await IdentityInstaller.VerifyAsync(platform, deployment, ct);
+        // Check the independent platform registry BEFORE native handlers can emit
+        // an authorization code or even an OAuth error to a drifted native URI.
+        if (issuer && path is "/connect/authorize" or "/connect/logout")
+        {
+            // Do not retain a SQL session while a client supplies a POST form body.
+            // EF opens the same fixed source for the callback query after parsing.
+            if (HttpMethods.IsPost(context.Request.Method)) await platformSql.CloseAsync();
+            await DemandRegisteredCallbackAsync(context, platform, deployment, path == "/connect/logout");
+        }
+        ShellSettings expected;
+        if (issuer)
+        {
+            expected = NativeServices.Settings("Default", "", bootstrap.InstallationId, platformConnection);
+            expected["TablePrefix"] = deployment.NativePrefix;
+            context.Features.Set(new RoutedTenantSelection(bootstrap.InstallationId, "Default", 0));
+        }
+        else
+        {
+            var tenant = await platform.Tenants.AsNoTracking().SingleOrDefaultAsync(x => x.Slug == slug, ct);
+            if (tenant is null) { context.Response.StatusCode = 404; return null; }
+            TenantDatabaseVerifier.ValidateRegistration(tenant);
+            var selected = connections.Customer(tenant.Id, "runtime");
+            await using var customerSql = await SqlOperations.OpenAsync(selected, ct);
+            // Identity/nonce must be validated BEFORE reading native metadata.
+            // Do not query identity a second time through VerifyAsync afterward.
+            await TenantDatabaseVerifier.ReadAndVerifyAsync(tenant, customerSql,
+                FoundationProfile.ReadSnapshotAsync, ct);
+            if (local == "/health/ready" && !TenantPolicy.IsOperational(tenant.Status(), context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()))
+                throw new TenantContractException("tenant_not_operational");
+            // For identity endpoints the authoritative family/membership/lifecycle
+            // checks return 401/403; a disabled tenant must never fall into Default.
+            expected = NativeServices.Settings(tenant.Slug, tenant.Slug, tenant.Id, selected);
+            context.Features.Set(new RoutedTenantSelection(tenant.Id, tenant.Slug, tenant.RegistryVersion));
+        }
+        return expected;
     }
 
     private static async Task DemandRegisteredCallbackAsync(HttpContext context, PlatformDbContext platform, IdentityDeployment deployment, bool logout)

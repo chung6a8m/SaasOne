@@ -23,6 +23,7 @@ public sealed class M4OrderListSqlTests
         await using var h = await M4SqlHarness.CreateAsync(Ct);
         var rows = await SeedAsync(h, 51, 1);
         using (var queries = new OrdersReadCounter(h.Target.Connection))
+        using (var calls = new ResourceLockCommandCounter())
         {
             var page = await h.Service().ListAsync(0, Ct);
             Assert.Equal(50, page.Items.Length);
@@ -30,6 +31,7 @@ public sealed class M4OrderListSqlTests
             Assert.Equal(rows.Take(50).Select(x => x.Id), page.Items.Select(x => x.Id));
             // Counts only Orders/revisions data SELECTs (not schema, authority or lock commands).
             Assert.Equal(4, queries.Count);
+            Assert.Equal(1, calls.Count); // 51 server-side locks, one SqlClient round trip.
         }
 
         h.Deny("Orders.ViewOthers");
@@ -84,6 +86,7 @@ public sealed class M4OrderListSqlTests
         Assert.Equal(4, queries.Count);
     }
 
+
     private static async Task<OrderRow[]> SeedAsync(M4SqlHarness h, int owned, int other)
     {
         var timestamp = DateTimeOffset.UtcNow;
@@ -113,6 +116,43 @@ public sealed class M4OrderListSqlTests
         }));
         await db.SaveChangesAsync(Ct);
         return rows;
+    }
+
+
+    // Test-only observer. Inspect fixed lock command metadata in-memory; export no SQL, IDs or parameter values.
+    private sealed class ResourceLockCommandCounter : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+    {
+        private readonly IDisposable _listeners;
+        private readonly List<IDisposable> _subscriptions = [];
+        private int _count;
+
+        internal ResourceLockCommandCounter() => _listeners = DiagnosticListener.AllListeners.Subscribe(this);
+        internal int Count => Volatile.Read(ref _count);
+        public void OnNext(DiagnosticListener listener)
+        {
+            if (listener.Name == "SqlClientDiagnosticListener")
+                _subscriptions.Add(listener.Subscribe(this, key => key == "Microsoft.Data.SqlClient.WriteCommandBefore"));
+        }
+        public void OnNext(KeyValuePair<string, object?> value)
+        {
+            if (value.Key != "Microsoft.Data.SqlClient.WriteCommandBefore"
+                || value.Value?.GetType().GetProperty("Command")?.GetValue(value.Value) is not SqlCommand command)
+                return;
+            string? resource = null;
+            if (command.Parameters.Contains("@resource"))
+                resource = command.Parameters["@resource"].Value as string;
+            else if (command.Parameters.Contains("@resources"))
+                resource = command.Parameters["@resources"].Value as string;
+            if (resource?.StartsWith("orders-resource:", StringComparison.Ordinal) == true)
+                Interlocked.Increment(ref _count);
+        }
+        public void OnError(Exception error) { }
+        public void OnCompleted() { }
+        public void Dispose()
+        {
+            _listeners.Dispose();
+            foreach (var subscription in _subscriptions) subscription.Dispose();
+        }
     }
 
     private sealed class OrdersReadCounter : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable

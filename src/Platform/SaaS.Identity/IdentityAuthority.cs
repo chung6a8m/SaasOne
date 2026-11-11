@@ -1,9 +1,16 @@
 using System.Security.Claims;
+using SaaS.Abstractions.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Domain;
+using SaaS.Tenancy.Operations;
 
 namespace SaaS.Identity;
+
+// Only nonsecret, fresh platform fields; never a tracked EF tenant or cached Allow.
+public sealed record FreshTenantAuthority(string Plan, long RegistryVersion,
+    long AuthorizationGeneration, DateTimeOffset? RetiredAt, TenantStatus Status);
+public sealed record ValidatedBearerTenant(IdentityFamily Family, FreshTenantAuthority Current);
 
 /// <summary>Fresh platform reads on every authorization. A credential never selects a connection.</summary>
 public sealed class IdentityAuthority(TenancyConnections connections, IdentityDeployment deployment,
@@ -100,18 +107,74 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
     }
 
     public async Task<IdentityFamily> ValidateAsync(Guid familyId, Guid routedTenantId, bool web, CancellationToken ct)
+        => (await ValidateCoreAsync(familyId, routedTenantId, web, null, null, false, ct)).Family;
+
+    // This is used only after JWT signature, issuer, audience, lifetime and scope
+    // validation. It returns a family solely AFTER all native checks succeed.
+    internal async Task<IdentityFamily> ValidateBearerAsync(Guid familyId, Guid routedTenantId,
+        ClaimsPrincipal principal, string tokenId, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(principal);
+        return (await ValidateCoreAsync(familyId, routedTenantId, false, principal, tokenId, false, ct)).Family;
+    }
+
+    // Used solely by the product API. The post-native tenant SELECT is fresh
+    // on the same owned unpooled platform connection, not a cached identity.
+    internal async Task<ValidatedBearerTenant> ValidateBearerForApplicationAsync(Guid familyId, Guid routedTenantId,
+        ClaimsPrincipal principal, string tokenId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(principal);
+        var result = await ValidateCoreAsync(familyId, routedTenantId, false, principal, tokenId, true, ct);
+        return new(result.Family, result.Current ?? throw new InvalidOperationException("Current tenant source unavailable."));
+    }
+
+    private async Task<(IdentityFamily Family, FreshTenantAuthority? Current)> ValidateCoreAsync(
+        Guid familyId, Guid routedTenantId, bool web, ClaimsPrincipal? bearerPrincipal,
+        string? tokenId, bool includeCurrentTenant, CancellationToken ct)
+    {
+        using var stage = SaaSStageActivity.Start(SaaSStage.IdentityFresh);
         await using var db = Open();
-        var family = await db.IdentityFamilies.AsNoTracking().SingleOrDefaultAsync(x => x.Id == familyId, ct);
+        // Keep one physical login for this validation only, not an authority snapshot.
+        // Every query below still executes; disposing this owned context closes it.
+        await db.Database.OpenConnectionAsync(ct);
+        // One fresh platform SQL SELECT for all seven keyed source entities.
+        // LEFT JOINs let the existing fail-closed checks distinguish a missing
+        // family/membership from missing mandatory related source data. Every
+        // table still participates; no principal/claim ever selects a source.
+        var authoritative = await (
+            from f in db.IdentityFamilies.AsNoTracking()
+            where f.Id == familyId
+            join s in db.IdentitySessions.AsNoTracking() on f.SessionId equals s.Id into sessions
+            from sessionRow in sessions.DefaultIfEmpty()
+            join a in db.IdentityAccounts.AsNoTracking() on f.GlobalUserId equals a.Id into accounts
+            from accountRow in accounts.DefaultIfEmpty()
+            join t in db.Tenants.AsNoTracking() on f.TenantId equals t.Id into tenants
+            from tenantRow in tenants.DefaultIfEmpty()
+            join m in db.IdentityMemberships.AsNoTracking()
+                on new { f.GlobalUserId, f.TenantId } equals new { m.GlobalUserId, m.TenantId } into members
+            from memberRow in members.DefaultIfEmpty()
+            join g in db.IdentityTenantSecurity.AsNoTracking() on f.TenantId equals g.TenantId into securities
+            from securityRow in securities.DefaultIfEmpty()
+            join c in db.IdentityClients.AsNoTracking() on f.ClientId equals c.ClientId into clients
+            from clientRow in clients.DefaultIfEmpty()
+            select new
+            {
+                Family = f, Session = sessionRow, Account = accountRow,
+                Tenant = tenantRow, Member = memberRow, Security = securityRow, Client = clientRow
+            }
+        ).SingleOrDefaultAsync(ct);
+        var family = authoritative?.Family;
         if (family is null || family.TenantId != routedTenantId || family.Issuer != deployment.Issuer.AbsoluteUri
             || family.RevokedAt is not null || family.SubscriptionExpiresAt <= Now || family.RefreshAbsoluteExpiresAt <= Now)
             throw new IdentityDeniedException(401, "grant_invalid");
-        var session = await db.IdentitySessions.AsNoTracking().SingleAsync(x => x.Id == family.SessionId, ct);
-        var account = await db.IdentityAccounts.AsNoTracking().SingleAsync(x => x.Id == family.GlobalUserId, ct);
-        var tenant = await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == family.TenantId, ct);
-        var member = await db.IdentityMemberships.AsNoTracking().SingleOrDefaultAsync(x => x.GlobalUserId == family.GlobalUserId && x.TenantId == family.TenantId, ct);
-        var security = await db.IdentityTenantSecurity.AsNoTracking().SingleAsync(x => x.TenantId == family.TenantId, ct);
-        var client = await db.IdentityClients.AsNoTracking().SingleAsync(x => x.ClientId == family.ClientId, ct);
+        // Prior SingleAsync calls failed closed on missing mandatory source
+        // records. Do not turn those failures into missing-membership or Allow.
+        var session = authoritative!.Session ?? throw new InvalidOperationException("identity_session_missing");
+        var account = authoritative.Account ?? throw new InvalidOperationException("identity_account_missing");
+        var tenant = authoritative.Tenant ?? throw new InvalidOperationException("identity_tenant_missing");
+        var member = authoritative.Member;
+        var security = authoritative.Security ?? throw new InvalidOperationException("identity_security_missing");
+        var client = authoritative.Client ?? throw new InvalidOperationException("identity_client_missing");
         if (session.RevokedAt is not null || !account.Enabled || account.Generation != family.AccountGeneration
             || session.AccountGeneration != account.Generation || session.GlobalUserId != family.GlobalUserId || session.TenantId != family.TenantId
             || session.Subject != family.Subject) throw new IdentityDeniedException(401, "session_invalid");
@@ -123,10 +186,23 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         deployment.ValidateClient(client);
         if (web && (session.IdleExpiresAt <= Now || session.AbsoluteExpiresAt <= Now))
             throw new IdentityDeniedException(401, "session_expired");
-        await issuerStore.ValidateAccountAsync(session.Subject, session.NativeSecurityStamp, ct);
-        await issuerStore.ValidateAuthorizationAsync(family.AuthorizationId, family.Subject, ct);
+        if (bearerPrincipal is null)
+            await issuerStore.ValidateAccountAndAuthorizationAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);
+        else
+            await issuerStore.ValidateBearerAsync(session.Subject, session.NativeSecurityStamp, family.AuthorizationId,
+                tokenId ?? "", () => IdentityProtocol.DemandClaims(bearerPrincipal, family), ct);
         if (web) await TouchAsync(db, session, ct);
-        return family;
+        FreshTenantAuthority? current = null;
+        if (includeCurrentTenant)
+        {
+            // A SECOND real tenant SELECT, intentionally after the native checks.
+            // The earlier identity tenant query never becomes a cached plan/Allow.
+            // AsNoTracking prevents reusing an EF identity-map tenant.
+            var latest = await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == routedTenantId, ct);
+            current = new(latest.Plan, latest.RegistryVersion, latest.AuthorizationGeneration,
+                latest.RetiredAt, latest.Status());
+        }
+        return (family, current);
     }
 
     public static Guid RequiredId(ClaimsPrincipal principal, string name) =>
