@@ -77,7 +77,7 @@ sequenceDiagram
     N->>P: Fresh current tenant read after native checks
     N-->>R: Valid family + current authority, hoặc fail closed
     R->>T: Current application profile / entitlements
-    R->>S: Request normalized; initial authority checked
+    R->>S: Request normalized, initial authority checked
     S->>T: Begin customer transaction + write gate SHARED
     S->>T: ACL lock SHARED + current authority/ACL snapshot
     S->>T: Command partition EXCLUSIVE → resource EXCLUSIVE
@@ -140,23 +140,23 @@ sequenceDiagram
     participant A as Request A
     participant DB as Tenant SQL DB
     participant B as Request B (same key)
-    A->>DB: BEGIN; gate S; ACL S; command X
-    A->>DB: resource X; fresh identity + ACL
-    B->>DB: BEGIN; gate S; ACL S
+    A->>DB: BEGIN, gate S, ACL S, command X
+    A->>DB: resource X, fresh identity + ACL
+    B->>DB: BEGIN, gate S, ACL S
     B->>DB: command X (WAIT)
     Note over A,DB: Business/Approval/History/Audit/Receipt là một transaction
-    A->>DB: Revalidate after hook; COMMIT
+    A->>DB: Revalidate after hook, COMMIT
     DB-->>B: Command X available
-    B->>DB: Find receipt; resource S
+    B->>DB: Find receipt, resource S
     B->>DB: Fresh authority + current resource rights
     alt Same original fingerprint, right still granted, receipt valid
-      DB-->>B: Stored success; no second write/audit
+      DB-->>B: Stored success, no second write/audit
     else Different fingerprint / expired receipt
       DB-->>B: Authorized 409 conflict
     else Current Deny / missing required authority
-      DB-->>B: 401 / 403 / 503; no disclosure
+      DB-->>B: 401 / 403 / 503, no disclosure
     end
-    B->>DB: COMMIT or ROLLBACK; release locks
+    B->>DB: COMMIT or ROLLBACK, release locks
 ```
 
 **Điểm quan trọng khi đo:** thời gian **chờ cấp lock** khác thời gian **giữ lock**; span application-side “hold” là ước lượng đến cuối transaction, **không phải xác nhận chính xác SQL đã nhả lock**. Không cộng các p95 stage lại. Diagnostic P2 của [PR #17](https://github.com/chung6a8m/SaasOne/pull/17) đã merge nhưng là **test-only**, không tạo authority cache, thay đổi thứ tự lock hay nới quyền.
