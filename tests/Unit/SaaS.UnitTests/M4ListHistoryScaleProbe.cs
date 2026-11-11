@@ -39,6 +39,13 @@ internal static class M4ListHistoryScaleProbe
             Assert.True(report.LegacyThreeQueries.LogicalReads > 0, "Missing actual SQL Server grouped-query logical-read evidence.");
             Assert.True(report.ProjectionPlan.Operators > 0 && report.GroupedHistoryPlan.Operators > 0,
                 "Missing actual SQL Server XML query-plan operators.");
+            // RED: the old correlated Count/Any implementation performs
+            // considerably MORE logical reads than three legacy SELECTs for
+            // 50 and 1000 revisions per order. A round-trip reduction alone
+            // must not justify a read-amplification regression.
+            Assert.True(report.Projection.LogicalReads <= report.LegacyThreeQueries.LogicalReads,
+                $"Deep-history projection read amplification at depth={depth}: " +
+                $"projection {report.Projection.LogicalReads}, legacy {report.LegacyThreeQueries.LogicalReads}.");
             reports.Add(report);
             priorDepth = depth;
         }
