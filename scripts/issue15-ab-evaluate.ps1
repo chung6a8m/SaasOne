@@ -31,22 +31,22 @@ try {
         $manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
         $type = [string]$sequence[$i]
         $expected = if ($type -eq 'A') { $ControlSha } else { $CandidateSha }
-        if ($manifest.variant -cne $type -or $manifest.sourceCommitSha -cne $expected
-            -or $manifest.harnessSha -cne $report.harnessSha
-            -or $manifest.sourceFileSha256 -notmatch '^[0-9a-f]{64}$')
+        if ($manifest.variant -cne $type -or $manifest.sourceCommitSha -cne $expected -or
+            $manifest.harnessSha -cne $report.harnessSha -or
+            $manifest.sourceFileSha256 -notmatch '^[0-9a-f]{64}$')
             { throw "Source identity invalid for $number" }
-        if ($load.status -cne 'PASS' -or $load.sourceSha -cne $report.harnessSha
-            -or $load.config.virtualUsersPerTenant -ne 25
-            -or $load.config.rampSeconds -ne 30 -or $load.config.measureSeconds -ne 120
-            -or $load.config.thinkMilliseconds -ne 250
-            -or $load.sqlProfilerEnabled -ne $false -or $load.peakVirtualUsers -ne 100
-            -or @($load.rows).Count -ne 22
-            -or @($load.missingCells).Count -ne 0 -or @($load.unexpectedFailures).Count -ne 0
-            -or @($load.integrityErrors).Count -ne 0)
+        if ($load.status -cne 'PASS' -or $load.sourceSha -cne $report.harnessSha -or
+            $load.config.virtualUsersPerTenant -ne 25 -or
+            $load.config.rampSeconds -ne 30 -or $load.config.measureSeconds -ne 120 -or
+            $load.config.thinkMilliseconds -ne 250 -or
+            $load.sqlProfilerEnabled -ne $false -or $load.peakVirtualUsers -ne 100 -or
+            @($load.rows).Count -ne 22 -or
+            @($load.missingCells).Count -ne 0 -or @($load.unexpectedFailures).Count -ne 0 -or
+            @($load.integrityErrors).Count -ne 0)
             { throw "Invalid 100-VU, four-tenant, no-profiler workload for $number" }
         foreach ($cell in @($load.rows)) {
-            if ($null -eq $cell.latency -or $cell.measuredFailures -ne 0
-                -or $cell.allPhaseFailures -ne 0 -or $cell.transportFailures -ne 0)
+            if ($null -eq $cell.latency -or $cell.measuredFailures -ne 0 -or
+                $cell.allPhaseFailures -ne 0 -or $cell.transportFailures -ne 0)
                 { throw "Invalid $number business/transport coverage" }
             if ($cell.measuredRequests -lt 100)
                 { $issues.Add("$number/$($cell.tenant)/$($cell.operation):sample_floor_missed") }
@@ -56,7 +56,7 @@ try {
         $trials.Add([ordered]@{
             trial=$number; variant=$type; sourceCommitSha=$expected
             sourceFileSha256=[string]$manifest.sourceFileSha256
-            requestCount=@($load.rows | ForEach-Object { $_.totalRequests } | Measure-Object -Sum).Sum
+            requestCount=(@($load.rows | ForEach-Object { $_.totalRequests } | Measure-Object -Sum)[0]).Sum
             logicalProcessors=$load.environment.logicalProcessors
             processCpuSeconds=[double]$load.environment.processCpuSeconds
             list=@($list | Sort-Object tenant | ForEach-Object {

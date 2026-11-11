@@ -119,10 +119,10 @@ try {
 
     if ($AbLoadOnly) {
         $load = Get-Content (Join-Path $out 'load.json') -Raw | ConvertFrom-Json
-        if ($report.total -ne 1 -or $report.passed -ne 1 -or $report.testExitCode -ne 0
-            -or $load.status -cne 'PASS' -or $load.sqlProfilerEnabled -ne $false
-            -or $load.config.virtualUsersPerTenant -ne 25 -or $load.config.measureSeconds -ne 120
-            -or $load.peakVirtualUsers -ne 100 -or @($load.rows).Count -ne 22) {
+        if ($report.total -ne 1 -or $report.passed -ne 1 -or $report.testExitCode -ne 0 -or
+            $load.status -cne 'PASS' -or $load.sqlProfilerEnabled -ne $false -or
+            $load.config.virtualUsersPerTenant -ne 25 -or $load.config.measureSeconds -ne 120 -or
+            $load.peakVirtualUsers -ne 100 -or @($load.rows).Count -ne 22) {
             throw 'A/B load-only run is not a valid no-profiler original 100-VU test.'
         }
     }
