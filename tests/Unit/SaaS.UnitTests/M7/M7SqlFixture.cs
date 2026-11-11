@@ -93,6 +93,9 @@ public sealed class M7SqlFixture : IAsyncLifetime
             builder.Services.AddOrchardCore().ConfigureServices(services => services.Configure<OpenIdConnectOptions>(IdentityNames.Oidc,
                 options => options.BackchannelHttpHandler = Handler(false)));
             _app = builder.Build();
+            // Test-only closed-vocabulary activity; disabled outside the load
+            // profile's lifetime. Never installed in production Program.cs.
+            _app.Use(M7OperationAttribution.Middleware);
             // Production Identity host now checks the release fence on its
             // owned Platform routing login; use that exact middleware graph.
             IdentityRuntimeHost.Use(_app);
