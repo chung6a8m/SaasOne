@@ -118,7 +118,8 @@ try {
     $report.status = 'PASS'
     $code = 0
 } catch {
-    $report.issues = @((('BLOCKED: ' + $_.Exception.Message) -replace '(?i)password=[^\s;]+','password=[redacted]'))
+    # No raw exception payload or any credential-like key/value leaves this evaluator.
+    $report.issues = @('BLOCKED: invalid A/B evidence or summary; inspect the CI step status.')
     $report.status = 'BLOCKED'
 }
 finally {
