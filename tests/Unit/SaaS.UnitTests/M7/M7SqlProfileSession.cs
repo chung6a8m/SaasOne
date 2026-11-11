@@ -78,6 +78,17 @@ internal sealed class M7SqlProfileSession : IDisposable
         var client = _profile.Snapshot();
         var stageTimings = _stages.Snapshot();
         var sqlByStage = _profile.SnapshotStages();
+        // Prove every original tenant/operation actually reached an Orders
+        // span. Missing profile coverage is a diagnostic failure, not PASS.
+        var expected = new[] { "alpha", "beta", "gamma", "delta" }
+            .SelectMany(t => new[] { "create", "edit", "submit", "detail", "list" }
+                .Concat(t is "beta" or "gamma" ? new[] { "approve" } : Array.Empty<string>())
+                .Select(o => (Tenant: t, Operation: o))).ToHashSet();
+        var profiled = stageTimings.ByOperation
+            .Where(x => x.Stage is "orders.read" or "orders.write")
+            .Select(x => (x.Tenant, x.Operation)).ToHashSet();
+        Assert.True(expected.SetEquals(profiled),
+            "Sanitized Orders stage attribution must cover all 22 original tenant/operation cells.");
         await _observation.DisposeAsync();
         var after = await CaptureAsync(_connection, ct);
         var oldWaits = _before.Waits.ToDictionary(x => x.Name, StringComparer.Ordinal);
@@ -92,8 +103,9 @@ internal sealed class M7SqlProfileSession : IDisposable
         {
             schemaVersion = 2, sourceSha = M7Evidence.SourceSha, acceptance = "NOT_ASSESSED",
             scope = "Entire load window including ramp and drain, after token issuance and before integrity queries. Dedicated disposable SQL instance.",
-            interpretation = "Client totalMs sums concurrent operations, not wall-clock/CPU. Command counts/timings INCLUDE observation queries; application command count subtracts successful observation-query count only. Opens EXCLUDE the observation connection opened before the observer. Reader consumption is not in command timings. Server waits/counters include background and administrative snapshot traffic. Stage SQL groups use the innermost named Activity and are not per-request/tenant; stage durations are overlapping, and Orders lock holds approximate acquired-to-transaction-scope-end, not server release. Sampling adds overhead.",
-            beforeUtc = _before.Utc, afterUtc = after.Utc, requests, client, stageTimings, sqlByStage,
+            interpretation = "Client totalMs sums concurrent operations, not wall-clock/CPU. Command counts/timings INCLUDE observation queries; application command count subtracts successful observation-query count only. Opens EXCLUDE the observation connection opened before the observer. Reader consumption is not in command timings. Server waits/counters include background and administrative snapshot traffic. Stage SQL groups use the innermost named Activity; only additional operationStageTimings are classified by fixed test-only tenant/operation labels. Stage durations overlap, do NOT add; Orders lock holds approximate acquired-to-transaction-scope-end, NOT server-confirmed lock release/owner. Sampling and sanitized middleware add overhead.",
+            beforeUtc = _before.Utc, afterUtc = after.Utc, requests, client, stageTimings,
+            operationStageTimings = stageTimings.ByOperation, sqlByStage,
             connectionOpensPerRequest = requests == 0 ? 0 : client.Open.Count / (double)requests,
             applicationCommandCount = client.Command.Count - _samples,
             commandsPerRequest = requests == 0 ? 0 : (client.Command.Count - _samples) / (double)requests,

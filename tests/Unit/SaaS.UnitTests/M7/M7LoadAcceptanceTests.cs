@@ -61,6 +61,9 @@ internal sealed class M7LoadDriver(M7SqlFixture fixture, M7LoadConfig config) : 
                 [(await fixture.GrantAsync(fixture.Reviewers[0], slug)).AccessToken, (await fixture.GrantAsync(fixture.Reviewers[1], slug)).AccessToken];
         }));
         await fixture.DemandMatrixAsync(ct);
+        // Enabled only during the unchanged 100-VU load window. Middleware
+        // maps route shape to fixed tenant/operation labels, never raw IDs.
+        using var attribution = M7OperationAttribution.Enable();
         using var sqlProfile = await M7SqlProfileSession.StartAsync(fixture.Environment.Admin, ct);
         using var process = Process.GetCurrentProcess();
         var cpuStart = process.TotalProcessorTime;
