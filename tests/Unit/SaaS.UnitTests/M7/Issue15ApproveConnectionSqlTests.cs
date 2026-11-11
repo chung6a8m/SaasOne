@@ -1,4 +1,6 @@
 using System.Net;
+using SaaS.Tenancy.Data;
+using SaaS.Tenancy.Operations;
 using SaaS.Orders;
 using Xunit;
 
@@ -21,6 +23,66 @@ public sealed partial class M7SqlAcceptanceTests
             "/" + order.Id + "/submit", M7Http.Revision(order), ct: Ct))
             order = (await M7Http.ResultAsync(submit, HttpStatusCode.OK, Ct)).Order;
         Assert.Equal(OrderStatus.PendingApproval, order.Status);
+
+        // RED for the release+route single-login optimization. The real HTTPS
+        // fixture currently performs one release-gate SQL open PLUS routing.
+        // Every successful readiness request must still execute the release
+        // check, platform bootstrap/schema/native and customer nonce checks.
+        foreach (var (path, expected) in new[] { ("/health/ready", 1), ("/beta/health/ready", 2) })
+        {
+            using var warm = await fixture.Api.GetAsync(path, Ct);
+            Assert.Equal(HttpStatusCode.OK, warm.StatusCode);
+            using var readySql = new M7SqlProfile();
+            using var ready = await fixture.Api.GetAsync(path, Ct);
+            Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+            var result = readySql.Snapshot();
+            Assert.True(result.Open.Count == expected,
+                $"Fresh release+route readiness must use {expected} physical SQL opens; observed {result.Open.Count}.");
+            Assert.True(result.Command.Count >= 8, "Release, bootstrap, schema, identity and native readiness must remain fresh.");
+            Assert.Equal(0, result.Open.Errors);
+            Assert.Equal(0, result.Pending);
+        }
+
+        // Preserve the release gate: even when the original middleware is
+        // integrated into the routed SQL login, a pending offline release
+        // must close every valid tenant API and both readiness endpoints.
+        var releaseOperation = Guid.NewGuid();
+        var completed = false;
+        try
+        {
+            await using (var db = TenancyConnections.PlatformContext(fixture.Environment.PlatformAdmin))
+            {
+                db.Audit.Add(new OperationalAudit
+                {
+                    OperationId = releaseOperation, Actor = "issue15-disposable-fixture",
+                    Action = PlatformReleaseBarrier.Bound, OccurredAt = DateTimeOffset.UtcNow
+                });
+                await db.SaveChangesAsync(Ct);
+            }
+            foreach (var path in new[] { "/health/ready", "/beta/health/ready" })
+            {
+                using var blocked = await fixture.Api.GetAsync(path, Ct);
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
+            }
+            using (var blocked = await M7Http.SendAsync(fixture, creator, slug,
+                "/" + order.Id, ct: Ct))
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
+        }
+        finally
+        {
+            await using var db = TenancyConnections.PlatformContext(fixture.Environment.PlatformAdmin);
+            db.Audit.Add(new OperationalAudit
+            {
+                OperationId = releaseOperation, Actor = "issue15-disposable-fixture",
+                Action = PlatformReleaseBarrier.Completed, OccurredAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync(CancellationToken.None);
+            completed = true;
+        }
+        Assert.True(completed);
+        using (var ready = await fixture.Api.GetAsync("/beta/health/ready", Ct))
+            Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+
         var reviewer = (await fixture.GrantAsync(fixture.Reviewers[0], slug)).AccessToken;
 
         using var stageObserver = new M7StageProfile();
@@ -41,6 +103,9 @@ public sealed partial class M7SqlAcceptanceTests
         var platform = Assert.Single(stageSql, x => x.Stage == "identity.fresh");
         Assert.Equal(4, native.Open.Count);
         Assert.Equal(0, platform.Open.Count);
+        Assert.Equal(2, Assert.Single(stageSql, x => x.Stage == "routing").Open.Count);
+        Assert.Equal(1, Assert.Single(stageSql, x => x.Stage == "orders.write").Open.Count);
+        Assert.Equal(1, Assert.Single(stageSql, x => x.Stage == "other").Open.Count);
         // Include every physical open (including the release-barrier gate),
         // rather than silently excluding unanticipated request middleware.
         var stageCounts = string.Join(", ", stageSql.OrderBy(x => x.Stage, StringComparer.Ordinal)
