@@ -148,14 +148,14 @@ internal static class M4ListHistoryScaleProbe
             where ids.Contains(row.Id)
             join last in db.Revisions.AsNoTracking()
                 on new { OrderId = row.Id, row.Revision } equals new { last.OrderId, last.Revision } into lasts
-            from latest in lasts.DefaultIfEmpty()
+            from lastRevision in lasts.DefaultIfEmpty()
             join summary in groupedHistory on row.Id equals summary.OrderId into histories
-            from history in histories.DefaultIfEmpty()
+            from summaryRow in histories.DefaultIfEmpty()
             select new
             {
-                Row = row, Latest = latest,
-                HistoryCount = history == null ? 0L : history.Count,
-                HistoricalApproval = history != null && history.HistoricalApproval != 0
+                Row = row, Latest = lastRevision,
+                HistoryCount = summaryRow == null ? 0L : summaryRow.Count,
+                HistoricalApproval = summaryRow != null && summaryRow.HistoricalApproval != 0
             };
 
         // ToQueryString creates real EF SQL with in-process parameter
