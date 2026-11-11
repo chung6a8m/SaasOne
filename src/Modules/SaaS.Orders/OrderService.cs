@@ -224,41 +224,41 @@ public sealed class OrderService(string connection, Guid tenantId, PermissionCat
         var items = new List<OrderView>(ids.Length);
         if (ids.Length == 0) return items;
 
-        // Four bounded SELECTs for a full page: page IDs, Orders, current revisions,
-        // and grouped history counts/markers. The existing per-resource locks stay ordered.
-        var rows = await db.Orders.AsNoTracking()
-            .Where(x => ids.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
-        var latest = await (
-            from revision in db.Revisions.AsNoTracking()
-            join order in db.Orders.AsNoTracking() on revision.OrderId equals order.Id
-            where ids.Contains(order.Id) && revision.Revision == order.Revision
-            select revision
-        ).ToDictionaryAsync(x => x.OrderId, ct);
-        var history = await db.Revisions.AsNoTracking()
-            .Where(x => ids.Contains(x.OrderId))
-            .GroupBy(x => x.OrderId)
-            .Select(group => new
+        // Exactly TWO Orders/Revisions SQL SELECTs per nonempty page:
+        // the existing page-ID query before ordered shared resource locks,
+        // then this one bounded, nontracking integrity projection AFTER all
+        // shared locks and the fresh post-lock authority recheck. The revision
+        // subqueries inspect ALL history; they are not a cached summary.
+        var locked = await db.Orders.AsNoTracking()
+            .Where(row => ids.Contains(row.Id))
+            .Select(row => new
             {
-                OrderId = group.Key,
-                Count = group.LongCount(),
-                HistoricalMarker = group.Max(x => x.ApprovalRequired ? 1 : 0)
-            }).ToDictionaryAsync(x => x.OrderId, ct);
+                Row = row,
+                Latest = db.Revisions.AsNoTracking()
+                    .Where(revision => revision.OrderId == row.Id && revision.Revision == row.Revision)
+                    .SingleOrDefault(),
+                HistoryCount = db.Revisions.LongCount(revision => revision.OrderId == row.Id),
+                HistoricalApproval = db.Revisions.Any(revision =>
+                    revision.OrderId == row.Id && revision.ApprovalRequired)
+            }).ToDictionaryAsync(x => x.Row.Id, ct);
 
-        // The latest snapshot, exact revision count and *all* past approval markers
-        // are still verified for every row, including the pagination sentinel.
+        // Keep the page-ID order (including the 51st pagination sentinel)
+        // and the original integrity-then-current-permission failure order.
+        // A missing order is 404; any missing/mismatched latest revision,
+        // history count, snapshot or old approval obligation is still 503.
         foreach (var id in ids)
         {
-            if (!rows.TryGetValue(id, out var row))
+            if (!locked.TryGetValue(id, out var facts))
                 throw new AccessDeniedException(404, "order_not_found");
+            var row = facts.Row;
             var current = row.View();
             OrderPolicy.DemandIntegrity(current);
-            if (!latest.TryGetValue(id, out var revision)
-                || revision.Status != row.Status || revision.ApprovalRequired != row.ApprovalRequired
-                || JsonSerializer.Deserialize<OrderView>(revision.SnapshotJson) != current
-                || !history.TryGetValue(id, out var summary) || summary.Count != row.Revision
-                || !row.ApprovalRequired && summary.HistoricalMarker != 0)
+            var latest = facts.Latest;
+            if (latest is null || latest.Status != row.Status || latest.ApprovalRequired != row.ApprovalRequired
+                || JsonSerializer.Deserialize<OrderView>(latest.SnapshotJson) != current
+                || facts.HistoryCount != row.Revision
+                || !row.ApprovalRequired && facts.HistoricalApproval)
                 throw new AccessDeniedException(503, "order_history_invalid");
-            // Preserve per-item integrity-then-current-permission failure ordering.
             OrderPermissions.RequireRead(catalog, access, current);
             items.Add(current);
         }
