@@ -7,7 +7,7 @@ namespace SaaS.UnitTests;
 // Supplemental SQL/HTTPS POC, not an eighth mandatory M7 case.
 // The unchanged M7 inventory must remain exactly seven cases.
 [Collection("M7 SQL")]
-[Trait("Category", "SqlIssue15")]
+[Trait("Category", "SqlM2")]
 public sealed class Issue15ApproveConnectionSqlTests(M7SqlFixture fixture) : IClassFixture<M7SqlFixture>
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
