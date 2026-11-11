@@ -186,6 +186,11 @@ public sealed class IdentityAuthority(TenancyConnections connections, IdentityDe
         deployment.ValidateClient(client);
         if (web && (session.IdleExpiresAt <= Now || session.AbsoluteExpiresAt <= Now))
             throw new IdentityDeniedException(401, "session_expired");
+        // A disabled login can remain authenticated on this borrowed session.
+        // Check the current server principal AFTER the platform SELECT and
+        // immediately BEFORE native account/grant/token authorization. The
+        // native-scope exit repeats this check after the final tenant SELECT.
+        await DefaultIssuerStore.DemandEnabledRuntimeLoginAsync(sql, ct);
         if (bearerPrincipal is null)
             await DefaultIssuerStore.ValidateAccountAndAuthorizationInScopeAsync(nativeProvider,
                 session.Subject, session.NativeSecurityStamp, family.AuthorizationId, ct);

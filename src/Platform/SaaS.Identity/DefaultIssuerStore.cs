@@ -87,8 +87,27 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock, Te
             result = await action(provider, sql);
             if (native.CurrentTransaction is not null || sql.State != ConnectionState.Open)
                 throw new InvalidOperationException("Native issuer SQL ownership changed during validation.");
+            // SQL Server does not terminate an established session on DISABLE.
+            // Recheck the live login state after native AND post-native reads;
+            // never return an Allow from a session disabled during validation.
+            await DemandEnabledRuntimeLoginAsync(sql, cancellationToken);
         }, cancellationToken);
         return result;
+    }
+
+    // One metadata SELECT, no additional physical open or privileged SQL login.
+    // SQL Server exposes the caller's own login in sys.server_principals.
+    // Missing/invisible rows and any SQL error fail closed.
+    internal static async Task DemandEnabledRuntimeLoginAsync(SqlConnection sql, CancellationToken ct)
+    {
+        var enabled = await SqlOperations.ScalarAsync(sql, """
+            SELECT CASE WHEN EXISTS (
+                SELECT 1 FROM sys.server_principals
+                WHERE name = ORIGINAL_LOGIN() AND type = 'S' AND is_disabled = 0
+            ) THEN 1 ELSE 0 END
+            """, ct);
+        if (enabled is not int value || value != 1)
+            throw new InvalidOperationException("Authoritative native SQL principal disabled or unavailable.");
     }
 
     // This scope lives for ONE validation; it is never reused by a later authority read.

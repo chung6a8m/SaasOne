@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - 'src/Platform/SaaS.Identity/**'
+      - 'src/Platform/SaaS.Tenancy/**'
+      - 'src/SaaS.Web/**'
       - 'tests/Unit/SaaS.UnitTests/**'
       - 'scripts/m7-sql-fixture.ps1'
       - '.github/workflows/issue15.yml'
