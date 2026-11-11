@@ -1,4 +1,6 @@
+using System.Data;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using OpenIddict.Abstractions;
@@ -9,12 +11,13 @@ using OrchardCore.Environment.Shell;
 using OrchardCore.Users;
 using OrchardCore.Users.Models;
 using YesSql;
+using SaaS.Tenancy.Data;
 using SaaS.Tenancy.Operations;
 
 namespace SaaS.Identity;
 
 /// <summary>Authoritative native store reads after cryptographic validation. Never authenticates a token by itself.</summary>
-public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
+public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock, TenancyConnections connections)
 {
     public async Task InDefaultAsync(Func<IServiceProvider, Task> action, CancellationToken cancellationToken)
     {
@@ -32,12 +35,72 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
         cancellationToken.ThrowIfCancellationRequested();
     }
 
+
+    /// <summary>
+    /// One new unpooled native YesSQL scope owns a single physical SQL login for
+    /// exactly ONE complete authority validation. EF may borrow this connection
+    /// sequentially; the native ISession is the only owner and disposes it.
+    /// Nothing survives the callback or is shared with another validation.
+    /// </summary>
+    internal async Task<T> WithFreshPlatformConnectionAsync<T>(
+        Func<IServiceProvider, SqlConnection, Task<T>> action, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        T result = default!;
+        await InDefaultAsync(async provider =>
+        {
+            // Do not let the caller, a claim, or a non-Default Orchard shell
+            // choose the platform source. The live shell is compared to a
+            // separately derived deployment secret, before borrowing a handle.
+            var shell = provider.GetRequiredService<ShellSettings>();
+            var trustedSource = connections.Platform("runtime");
+            if (!string.Equals(shell["ConnectionString"], trustedSource, StringComparison.Ordinal)
+                || shell["DatabaseProvider"] != "SqlConnection")
+                throw new InvalidOperationException("Authoritative native source mismatch.");
+
+            var native = provider.GetRequiredService<ISession>();
+            if (native.CurrentTransaction is not null)
+                throw new InvalidOperationException("Native issuer must be outside a transaction.");
+
+            // Real YesSQL v5.4.7 provides the connection it will use for ALL
+            // native account/grant/token reads; no synthetic SQL replacement.
+            var borrowed = await native.CreateConnectionAsync(cancellationToken);
+            if (borrowed is not SqlConnection sql || sql.State != ConnectionState.Open)
+                throw new InvalidOperationException("Authoritative native SQL connection unavailable.");
+
+            var expected = new SqlConnectionStringBuilder(trustedSource);
+            // Persist Security Info=False can hide the password once open.
+            // Compare source, catalog, actual login and unpooled flags; never
+            // export either connection string or the login to diagnostics.
+            var actual = new SqlConnectionStringBuilder(sql.ConnectionString);
+            if (!string.Equals(sql.DataSource, expected.DataSource, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(sql.Database, expected.InitialCatalog, StringComparison.Ordinal)
+                || !string.Equals(actual.InitialCatalog, expected.InitialCatalog, StringComparison.Ordinal)
+                || !string.Equals(actual.UserID, expected.UserID, StringComparison.Ordinal)
+                || actual.Pooling || actual.Enlist || actual.IntegratedSecurity)
+                throw new InvalidOperationException("Authoritative native SQL source mismatch.");
+
+            if (await SqlOperations.ScalarAsync(sql, "SELECT ORIGINAL_LOGIN()", cancellationToken) is not string login
+                || !string.Equals(login, expected.UserID, StringComparison.Ordinal))
+                throw new InvalidOperationException("Authoritative native SQL principal mismatch.");
+
+            result = await action(provider, sql);
+            if (native.CurrentTransaction is not null || sql.State != ConnectionState.Open)
+                throw new InvalidOperationException("Native issuer SQL ownership changed during validation.");
+        }, cancellationToken);
+        return result;
+    }
+
     // This scope lives for ONE validation; it is never reused by a later authority read.
-    public Task ValidateAccountAndAuthorizationAsync(string subject, string stamp, string authorizationId, CancellationToken cancellationToken) => InDefaultAsync(async provider =>
+    public Task ValidateAccountAndAuthorizationAsync(string subject, string stamp, string authorizationId, CancellationToken cancellationToken) =>
+        InDefaultAsync(provider => ValidateAccountAndAuthorizationInScopeAsync(provider, subject, stamp, authorizationId, cancellationToken), cancellationToken);
+
+    internal static async Task ValidateAccountAndAuthorizationInScopeAsync(IServiceProvider provider,
+        string subject, string stamp, string authorizationId, CancellationToken cancellationToken)
     {
         await ValidateAccountAsync(provider, subject, stamp);
         await ValidateAuthorizationAsync(provider, authorizationId, subject, cancellationToken);
-    }, cancellationToken);
+    }
 
     // A bearer request already requires both issuer-family and native token checks.
     // Keep all of them in one NEW scope only for this validation, never across
@@ -46,15 +109,20 @@ public sealed class DefaultIssuerStore(IShellHost shells, TimeProvider clock)
         Action demandBoundClaims, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(demandBoundClaims);
-        return InDefaultAsync(async provider =>
-        {
-            await ValidateAccountAsync(provider, subject, stamp);
-            await ValidateAuthorizationAsync(provider, authorizationId, subject, cancellationToken);
-            // Preserve original ordering: claim/family binding occurs only after
-            // current native account + authorization pass, before native token reads.
-            demandBoundClaims();
-            await ValidateAccessAsync(provider, tokenId, authorizationId, subject, cancellationToken);
-        }, cancellationToken);
+        return InDefaultAsync(provider => ValidateBearerInScopeAsync(provider, subject, stamp,
+            authorizationId, tokenId, demandBoundClaims, cancellationToken), cancellationToken);
+    }
+
+    internal async Task ValidateBearerInScopeAsync(IServiceProvider provider, string subject, string stamp,
+        string authorizationId, string tokenId, Action demandBoundClaims, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(demandBoundClaims);
+        await ValidateAccountAsync(provider, subject, stamp);
+        await ValidateAuthorizationAsync(provider, authorizationId, subject, cancellationToken);
+        // Preserve the native ordering: fresh account/grant first, bound
+        // claims second, current native access token last.
+        demandBoundClaims();
+        await ValidateAccessAsync(provider, tokenId, authorizationId, subject, cancellationToken);
     }
 
     public Task ValidateAccountAsync(string subject, string stamp, CancellationToken cancellationToken) =>
